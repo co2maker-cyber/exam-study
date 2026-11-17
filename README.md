@@ -23,7 +23,7 @@ AWS Cloud Practitioner(CLF-C02) 기출 192문항 중 중복 1문항(191번 = 106
 | `정답표.md` | 전체 정답 한눈에 보기 |
 
 ## 문제 추가
-`data/set5.js` 같은 새 파일을 만들어 `addSet(...)`으로 등록하고 `index.html`에 `<script>` 한 줄을 추가하세요. 형식은 `data/_bank.js` 상단에 설명되어 있습니다.
+`data/set5.js` 같은 새 파일을 만들어 `addSet(...)`으로 등록하고 `index.html`에 `<script>` 한 줄을 추가하세요. 형식은 `data/bank.js` 상단에 설명되어 있습니다.
 
 ## GitHub Pages 배포
 1. GitHub에 새 저장소를 만들고 이 폴더를 push

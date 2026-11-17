@@ -117,7 +117,7 @@
       const list = pickQuestions(opts);
       if (!list.length) {
         document.getElementById("startMsg").textContent =
-          opts.source === "wrong" ? "오답노트가 비어 있어요. 먼저 문제를 풀어보세요!" : "문제가 없습니다. data/questions.js에 문제를 추가하세요.";
+          opts.source === "wrong" ? "오답노트가 비어 있어요. 먼저 문제를 풀어보세요!" : "문제를 불러오지 못했습니다. data 폴더의 문제 파일을 확인하세요.";
         return;
       }
       startQuiz(list, opts.source === "wrong" ? "오답노트" : (opts.domain || opts.exam || "전체 시험"));
