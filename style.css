@@ -133,3 +133,27 @@ textarea { min-height: 60px; resize: vertical; }
 .kbd-hint { font-size: 12px; color: var(--muted); margin-top: 10px; text-align: right; }
 .choice.picked { border-color: var(--primary); background: var(--primary-soft); }
 .choice span:last-child { flex: 1; }
+
+/* 용어 학습 표 */
+.toggle { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 14px; cursor: pointer; }
+.gl-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.gl-table th { text-align: left; font-size: 13px; color: var(--muted); font-weight: 600; padding: 8px; border-bottom: 2px solid var(--line); }
+.gl-table td { padding: 12px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.gl-table tr.known td { opacity: .55; }
+.gl-term b { font-size: 15px; }
+.gl-term .muted { font-size: 12px; margin: 2px 0 4px; }
+.gl-tip span { display: block; }
+.gl-quiz { margin-top: 8px; }
+.gl-known label { display: flex; align-items: center; gap: 4px; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.gl-table td.hidden { cursor: pointer; }
+.gl-table td.hidden > * { visibility: hidden; }
+.gl-table td.hidden { background: repeating-linear-gradient(45deg, var(--bg), var(--bg) 8px, var(--line) 8px, var(--line) 16px); border-radius: 8px; }
+.gl-table td.hidden::before { content: attr(data-label) " · 눌러서 보기"; display: block; color: var(--muted); font-size: 13px; margin-bottom: -1.4em; }
+@media (max-width: 640px) {
+  .gl-table thead { display: none; }
+  .gl-table, .gl-table tbody, .gl-table tr, .gl-table td { display: block; width: 100%; }
+  .gl-table tr { border-bottom: 1px solid var(--line); padding: 12px 0; }
+  .gl-table td { border: none; padding: 4px 0; }
+  .gl-table td.hidden { padding: 8px; margin: 4px 0; min-height: 44px; }
+  .gl-table td[data-label]:not(.hidden)::before { content: attr(data-label); display: block; font-size: 12px; color: var(--muted); font-weight: 600; }
+}

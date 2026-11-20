@@ -12,9 +12,9 @@
   function load() {
     try {
       const s = JSON.parse(localStorage.getItem(STORE_KEY));
-      if (s && typeof s === "object") return { stats: s.stats || {}, wrong: s.wrong || {} };
+      if (s && typeof s === "object") return { stats: s.stats || {}, wrong: s.wrong || {}, known: s.known || {} };
     } catch (e) { /* 무시 */ }
-    return { stats: {}, wrong: {} };
+    return { stats: {}, wrong: {}, known: {} };
   }
   let store = load();
   function save() {
@@ -383,19 +383,115 @@
       const f = e.target.files[0]; if (!f) return;
       f.text().then(t => {
         const d = JSON.parse(t);
-        store = { stats: d.stats || {}, wrong: d.wrong || {} };
+        store = { stats: d.stats || {}, wrong: d.wrong || {}, known: d.known || {} };
         save(); renderNotes(); alert("불러왔습니다.");
       }).catch(() => alert("올바른 백업 파일이 아닙니다."));
     };
     document.getElementById("resetBtn").onclick = () => {
-      if (confirm("모든 풀이 기록과 오답노트를 삭제할까요? 되돌릴 수 없습니다.")) { store = { stats: {}, wrong: {} }; save(); renderNotes(); }
+      if (confirm("모든 풀이 기록과 오답노트를 삭제할까요? 되돌릴 수 없습니다.")) { store = { stats: {}, wrong: {}, known: {} }; save(); renderNotes(); }
     };
+  }
+
+  // ---------- 용어 학습 표 ----------
+  const GLOSSARY = window.GLOSSARY || [];
+  const gopts = { q: "", cat: "", known: "all", hide: false };
+  const qText = q => (q.question + " " + (q.choices || []).join(" ")).toLowerCase();
+  const QTEXT = BANK.map(qText);
+  function relatedIds(g) {
+    if (g._rel) return g._rel;
+    const keys = [g.term.replace(/\s*\(.*?\)\s*/g, " ").trim(), ...g.alias].map(k => k.toLowerCase()).filter(k => k.length >= 2);
+    const tests = keys.map(k => /^[a-z0-9 .\-]+$/.test(k)
+      ? (t => new RegExp("(^|[^a-z0-9])" + k.replace(/[.\-]/g, "\\$&") + "($|[^a-z0-9])").test(t))
+      : (t => t.includes(k)));
+    g._rel = BANK.filter((q, i) => tests.some(f => f(QTEXT[i]))).map(q => q.id);
+    return g._rel;
+  }
+
+  function glossaryRows() {
+    const q = gopts.q.trim().toLowerCase();
+    return GLOSSARY.filter(g =>
+      (!gopts.cat || g.cat === gopts.cat) &&
+      (gopts.known === "all" || (gopts.known === "known") === !!store.known[g.id]) &&
+      (!q || [g.term, g.ko, g.meaning, g.tip, ...g.alias].join(" ").toLowerCase().includes(q)));
+  }
+
+  function renderGlossary() {
+    const knownCount = GLOSSARY.filter(g => store.known[g.id]).length;
+    const cats = window.GLOSSARY_CATEGORIES || [];
+    app.innerHTML = `
+      <section class="card">
+        <h1>용어 학습 표</h1>
+        <p class="muted">기출에 나온 AWS 용어 ${GLOSSARY.length}개의 뜻과 시험 포인트를 정리했습니다.
+        '뜻 가리기'로 스스로 테스트하고, 외운 용어는 체크하세요.</p>
+        <div class="progress" style="margin:10px 0 4px"><div style="width:${GLOSSARY.length ? knownCount / GLOSSARY.length * 100 : 0}%"></div></div>
+        <div class="muted" style="font-size:13px">외운 용어 ${knownCount} / ${GLOSSARY.length}</div>
+      </section>
+      <section class="card gl-controls">
+        <input type="text" id="glSearch" placeholder="용어·뜻 검색 (예: S3, 캐시, 라이선스)" value="${esc(gopts.q)}" autocomplete="off">
+        <div class="row" style="margin-top:10px">
+          <select id="glCat" style="flex:2">
+            <option value="">전체 분류</option>
+            ${cats.map(c => `<option value="${esc(c)}" ${gopts.cat === c ? "selected" : ""}>${esc(c)} (${GLOSSARY.filter(g => g.cat === c).length})</option>`).join("")}
+          </select>
+          <select id="glKnown" style="flex:1">
+            ${[["all", "전체"], ["unknown", "못 외운 것"], ["known", "외운 것"]].map(([k, t]) => `<option value="${k}" ${gopts.known === k ? "selected" : ""}>${t}</option>`).join("")}
+          </select>
+        </div>
+        <label class="toggle"><input type="checkbox" id="glHide" ${gopts.hide ? "checked" : ""}> 뜻 가리기 (눌러서 확인)</label>
+      </section>
+      <section class="card" id="glList"></section>`;
+
+    const list = document.getElementById("glList");
+    const draw = () => {
+      const rows = glossaryRows();
+      list.innerHTML = rows.length ? `
+        <div class="muted" style="font-size:13px;margin-bottom:8px">${rows.length}개 용어</div>
+        <table class="gl-table">
+          <thead><tr><th style="width:26%">용어</th><th>뜻</th><th style="width:30%">시험 포인트</th><th style="width:84px">외움</th></tr></thead>
+          <tbody>${rows.map(g => {
+            const rel = relatedIds(g).length;
+            return `<tr data-id="${g.id}" class="${store.known[g.id] ? "known" : ""}">
+              <td class="gl-term"><b>${esc(g.term)}</b><div class="muted">${esc(g.ko)}</div><span class="tag">${esc(g.cat)}</span></td>
+              <td class="gl-meaning ${gopts.hide ? "hidden" : ""}" data-label="뜻"><span>${esc(g.meaning)}</span></td>
+              <td class="gl-tip ${gopts.hide ? "hidden" : ""}" data-label="시험 포인트"><span>💡 ${esc(g.tip)}</span>
+                ${rel ? `<button class="btn small gl-quiz">관련 기출 ${rel}문제 풀기</button>` : ""}</td>
+              <td class="gl-known"><label><input type="checkbox" class="gl-check" ${store.known[g.id] ? "checked" : ""}> 외웠어요</label></td>
+            </tr>`;
+          }).join("")}</tbody>
+        </table>` : `<div class="empty">조건에 맞는 용어가 없어요.</div>`;
+
+      list.querySelectorAll("tr[data-id]").forEach(tr => {
+        const g = GLOSSARY.find(x => x.id === tr.dataset.id);
+        tr.querySelectorAll(".hidden").forEach(td => td.onclick = () => td.classList.remove("hidden"));
+        tr.querySelector(".gl-check").onchange = e => {
+          if (e.target.checked) store.known[g.id] = true; else delete store.known[g.id];
+          save();
+          if (gopts.known !== "all") renderGlossary();
+          else { tr.classList.toggle("known", e.target.checked); updateKnownBar(); }
+        };
+        const qb = tr.querySelector(".gl-quiz");
+        if (qb) qb.onclick = e => { e.stopPropagation(); startQuiz(shuffle(relatedIds(g).map(id => BY_ID[id])), `용어: ${g.term}`); window.scrollTo(0, 0); };
+      });
+    };
+    const updateKnownBar = () => {
+      const n = GLOSSARY.filter(g => store.known[g.id]).length;
+      app.querySelector(".progress > div").style.width = (n / GLOSSARY.length * 100) + "%";
+      app.querySelector(".progress + .muted").textContent = `외운 용어 ${n} / ${GLOSSARY.length}`;
+    };
+    draw();
+    const search = document.getElementById("glSearch");
+    search.oninput = () => { gopts.q = search.value; draw(); };
+    document.getElementById("glCat").onchange = e => { gopts.cat = e.target.value; draw(); };
+    document.getElementById("glKnown").onchange = e => { gopts.known = e.target.value; draw(); };
+    document.getElementById("glHide").onchange = e => { gopts.hide = e.target.checked; draw(); };
   }
 
   // ---------- 라우팅 & 키보드 ----------
   function go(page) {
     quiz = page === "quiz" ? quiz : null;
-    if (page === "notes") renderNotes(); else renderHome();
+    if (page === "notes") renderNotes();
+    else if (page === "glossary") renderGlossary();
+    else renderHome();
     window.scrollTo(0, 0);
   }
   document.addEventListener("click", e => {
