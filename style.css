@@ -73,7 +73,7 @@ h2 { font-size: 17px; margin: 0 0 12px; }
 
 .field { margin-bottom: 14px; }
 .field label { display: block; font-size: 14px; color: var(--muted); margin-bottom: 6px; }
-select, input[type=text], textarea {
+select, input[type=text], input[type=password], textarea {
   width: 100%; padding: 10px 12px; font: inherit; color: var(--text);
   background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
 }
@@ -183,4 +183,31 @@ textarea { min-height: 60px; resize: vertical; }
 @media (max-width: 640px) {
   .pager { gap: 4px; }
   .pager button { min-width: 34px; padding: 7px 8px; font-size: 13px; }
+}
+
+/* 로그인 · 계정 */
+.topbar nav { display: flex; align-items: center; gap: 2px; }
+.auth-btn { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line) !important; margin-left: 4px; }
+.avatar { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--primary); color: #fff; font-weight: 700; font-size: 13px; }
+.avatar.big { width: 48px; height: 48px; font-size: 20px; }
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.sync-dot.saved { background: var(--good); }
+.sync-dot.saving, .sync-dot.loading { background: #f0ad00; }
+.sync-dot.error { background: var(--bad); }
+.notice { margin-bottom: 16px; padding: 12px 14px; border-radius: 12px; background: #fff7e0; border: 1px solid #f3d27a; color: #6b4e00; font-size: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.notice.bad { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.notice .btn { margin-left: auto; }
+@media (prefers-color-scheme: dark) { .notice { background: #3a3014; border-color: #6b5a22; color: #f3d27a; } }
+.profile { display: flex; align-items: center; gap: 12px; }
+.btn.google { display: flex; align-items: center; justify-content: center; gap: 10px; font-weight: 600; margin-top: 8px; }
+.btn.google .g { font-weight: 800; color: #4285f4; font-size: 18px; }
+.divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; margin: 18px 0 12px; }
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.auth-msg { margin-top: 10px; font-size: 14px; }
+.auth-msg.bad { color: var(--bad); }
+.auth-msg.good { color: var(--good); }
+@media (max-width: 520px) {
+  .brand-text { display: none; }
+  .topbar { padding: 8px 10px; }
+  .topbar button { padding: 6px 8px; }
 }

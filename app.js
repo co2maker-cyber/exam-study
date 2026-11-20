@@ -3,24 +3,136 @@
 
   const BANK = (window.QUESTION_BANK || []).filter(q => q && q.id && q.question);
   const BY_ID = Object.fromEntries(BANK.map(q => [q.id, q]));
-  const STORE_KEY = "examStudy.v1";
   const CLEAR_STREAK = 2; // 오답노트 문제를 연속으로 이만큼 맞히면 오답노트에서 자동 삭제
   const NUMS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
   const app = document.getElementById("app");
 
-  // ---------- 저장소 ----------
-  function load() {
-    try {
-      const s = JSON.parse(localStorage.getItem(STORE_KEY));
-      if (s && typeof s === "object") return { stats: s.stats || {}, wrong: s.wrong || {}, known: s.known || {}, custom: s.custom || [] };
-    } catch (e) { /* 무시 */ }
-    return { stats: {}, wrong: {}, known: {}, custom: [] };
+  // ---------- 저장소 (로그인한 계정의 클라우드에 저장) ----------
+  // 학습 기록은 기기에 저장하지 않습니다. 로그인하면 계정(Firestore)에서 불러오고 자동 저장합니다.
+  const LEGACY_KEY = "examStudy.v1"; // 예전 버전이 기기에 남긴 기록: 로그인 시 계정으로 옮기고 삭제
+  const empty = () => ({ stats: {}, wrong: {}, known: {}, custom: [] });
+  const normalize = s => (s && typeof s === "object")
+    ? { stats: s.stats || {}, wrong: s.wrong || {}, known: s.known || {}, custom: Array.isArray(s.custom) ? s.custom : [] }
+    : empty();
+  const hasData = s => Object.keys(s.stats).length + Object.keys(s.wrong).length + Object.keys(s.known).length + s.custom.length > 0;
+  function merge(base, extra) {
+    const out = normalize(JSON.parse(JSON.stringify(base)));
+    for (const [id, v] of Object.entries(extra.stats)) if (!out.stats[id] || v.tries > out.stats[id].tries) out.stats[id] = v;
+    for (const [id, v] of Object.entries(extra.wrong)) if (!out.wrong[id] || v.count > out.wrong[id].count) out.wrong[id] = v;
+    Object.assign(out.known, extra.known);
+    for (const c of extra.custom) if (!out.custom.some(x => x.term.toLowerCase() === c.term.toLowerCase())) out.custom.push(c);
+    return out;
   }
-  let store = load();
+  function readLegacy() {
+    try { const v = localStorage.getItem(LEGACY_KEY); return v ? normalize(JSON.parse(v)) : null; } catch (e) { return null; }
+  }
+  function removeLegacy() { try { localStorage.removeItem(LEGACY_KEY); } catch (e) { /* 무시 */ } }
+
+  let store = empty();
+  let cloud = null;          // window.Cloud (cloud.js)
+  let loaded = false;        // 계정 기록을 정상적으로 불러왔는지 (실패 시 덮어쓰기 방지)
+  let dirty = false;         // 아직 저장되지 않은 변경
+  let syncState = "idle";    // idle | loading | saving | saved | error
+  let syncError = "";
+  let saveTimer = null;
+
   function save() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(store)); } catch (e) { /* 무시 */ }
     updateBadge();
+    dirty = true;
+    if (!cloud || !cloud.user || !loaded) { renderAccountChip(); return; }
+    setSync("saving");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flush, 800);
   }
+  async function flush() {
+    clearTimeout(saveTimer);
+    if (!cloud || !cloud.user || !loaded || !dirty) return;
+    dirty = false;
+    try {
+      await cloud.save(JSON.parse(JSON.stringify(store)));
+      if (!dirty) setSync("saved");
+    } catch (e) {
+      dirty = true; syncError = cloud.message(e); setSync("error");
+    }
+  }
+  function setSync(st) {
+    syncState = st;
+    renderAccountChip();
+    const el = document.getElementById("syncText");
+    if (el) el.innerHTML = syncText();
+  }
+  function syncText() {
+    return {
+      idle: "",
+      loading: "⏳ 계정에서 기록을 불러오는 중…",
+      saving: "⏳ 저장 중…",
+      saved: "✅ 계정에 저장됨",
+      error: "⚠️ 저장 실패: " + esc(syncError)
+    }[syncState] || "";
+  }
+
+  async function onAuthChanged(user) {
+    if (user) {
+      setSync("loading");
+      let remote;
+      try {
+        remote = normalize(await cloud.load());
+      } catch (e) {
+        loaded = false; syncError = cloud.message(e); setSync("error"); rerender(); return;
+      }
+      loaded = true;
+      let merged = remote, changed = false;
+      if (dirty && hasData(store)) { merged = merge(merged, store); changed = true; } // 로그인 전에 푼 기록
+      const legacy = readLegacy();
+      if (legacy && hasData(legacy)) {
+        if (confirm("이 기기에 예전 버전의 학습 기록이 남아 있습니다.\n계정으로 옮길까요?\n\n(확인: 계정으로 옮김 / 취소: 옮기지 않음)\n어느 쪽이든 이 기기에 남은 기록은 삭제됩니다.")) {
+          merged = merge(merged, legacy); changed = true;
+        }
+      }
+      removeLegacy();
+      store = merged;
+      if (changed) { dirty = true; await flush(); } else { dirty = false; setSync("saved"); }
+    } else {
+      store = empty(); loaded = false; dirty = false; setSync("idle");
+    }
+    rerender();
+  }
+
+  window.addEventListener("cloud-ready", () => {
+    cloud = window.Cloud;
+    window.addEventListener("auth-changed", e => onAuthChanged(e.detail));
+    renderAccountChip();
+    rerender();
+  });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+  window.addEventListener("beforeunload", e => {
+    const unsaved = cloud && cloud.user ? dirty : (dirty && hasData(store));
+    if (unsaved) { flush(); e.preventDefault(); e.returnValue = ""; }
+  });
+
+  function renderAccountChip() {
+    const el = document.getElementById("authBtn");
+    if (!el) return;
+    if (cloud && cloud.user) {
+      const n = cloud.user.name || cloud.user.email || "?";
+      el.innerHTML = `<span class="avatar">${esc(n.slice(0, 1).toUpperCase())}</span><span class="sync-dot ${syncState}"></span>`;
+      el.title = `${n} · ${syncText().replace(/<[^>]+>/g, "") || "로그인됨"}`;
+    } else {
+      el.textContent = "로그인";
+      el.title = "로그인하면 학습 기록이 계정에 저장됩니다";
+    }
+  }
+  function noticeHTML() {
+    if (cloud && cloud.user) return syncState === "error"
+      ? `<div class="notice bad">${syncText()} <button class="link" data-go="account">계정 화면</button></div>` : "";
+    if (!cloud) return "";
+    const why = !cloud.enabled
+      ? (cloud.failed ? "로그인 서비스를 불러오지 못했습니다(인터넷 연결 확인)." : "로그인 기능이 아직 설정되지 않았습니다.")
+      : "로그인하지 않았습니다.";
+    return `<div class="notice">🔒 ${why} 지금 푸는 기록은 <b>저장되지 않고</b> 페이지를 닫으면 사라집니다.
+      ${cloud.enabled ? `<button class="btn small primary" data-go="account">로그인하고 저장하기</button>` : ""}</div>`;
+  }
+
   function wrongIds() { return Object.keys(store.wrong).filter(id => BY_ID[id]); }
   function updateBadge() { document.getElementById("noteBadge").textContent = wrongIds().length; }
 
@@ -59,7 +171,7 @@
     const totalCorrect = tried.reduce((n, id) => n + store.stats[id].correct, 0);
     const acc = totalTries ? Math.round(totalCorrect / totalTries * 100) + "%" : "-";
 
-    app.innerHTML = `
+    app.innerHTML = noticeHTML() + `
       <section class="card">
         <h1>기출 반복 학습</h1>
         <p class="muted">문제를 풀면 바로 정답과 이유를 알려주고, 틀린 문제는 오답노트에 자동 저장됩니다.
@@ -335,7 +447,7 @@
   // ---------- 오답노트 ----------
   function renderNotes() {
     const ids = wrongIds().sort((a, b) => (store.wrong[b].count - store.wrong[a].count) || (store.wrong[b].lastWrong || 0) - (store.wrong[a].lastWrong || 0));
-    app.innerHTML = `
+    app.innerHTML = noticeHTML() + `
       <section class="card">
         <h1>오답노트</h1>
         <p class="muted">틀린 문제가 자동으로 모입니다. 많이 틀린 순서로 정렬돼요. ${CLEAR_STREAK}번 연속 맞히면 자동으로 빠집니다.</p>
@@ -348,15 +460,6 @@
       </section>
       <section class="card">
         ${ids.length ? ids.map(id => noteItemHTML(BY_ID[id], store.wrong[id].lastGiven, true)).join("") : `<div class="empty">오답노트가 비어 있어요 👍</div>`}
-      </section>
-      <section class="card">
-        <h2>학습 기록 관리</h2>
-        <p class="muted">기록은 이 브라우저에만 저장됩니다. 다른 기기로 옮기려면 백업 파일을 사용하세요.</p>
-        <div class="row">
-          <button class="btn small" id="exportBtn">백업 내보내기</button>
-          <label class="btn small" style="text-align:center">백업 불러오기<input type="file" id="importInp" accept=".json" hidden></label>
-          <button class="btn small danger" id="resetBtn">기록 전체 초기화</button>
-        </div>
       </section>`;
 
     app.querySelectorAll("[data-n]").forEach(b => b.onclick = () => {
@@ -371,6 +474,119 @@
       const del = el.querySelector(".del");
       if (del) del.onclick = () => { if (confirm("오답노트에서 삭제할까요?")) { delete store.wrong[id]; save(); renderNotes(); } };
     });
+  }
+
+  // ---------- 계정 (로그인 · 동기화) ----------
+  function renderAccount() {
+    let body;
+    if (!cloud) {
+      body = `<section class="card"><div class="empty">로그인 기능을 불러오는 중…</div></section>`;
+    } else if (!cloud.enabled) {
+      body = `<section class="card">
+        <h1>로그인</h1>
+        <p>${cloud.failed ? "로그인 서비스(Firebase)를 불러오지 못했습니다. 인터넷 연결을 확인하고 새로고침하세요."
+          : "로그인 기능이 아직 설정되지 않았습니다. 사이트 관리자가 Firebase를 연결하면 로그인할 수 있습니다."}</p>
+        <p class="muted">설정 방법은 저장소의 README.md '로그인 설정' 항목을 참고하세요. 설정 전에는 학습 기록이 저장되지 않습니다.</p>
+      </section>`;
+    } else if (!cloud.user) {
+      body = `<section class="card auth-card">
+        <h1>로그인</h1>
+        <p class="muted">로그인하면 풀이 기록, 오답노트, 외운 용어, 내 단어가 계정에 저장되어 어느 기기에서든 이어서 공부할 수 있습니다.</p>
+        <button class="btn block google" id="gBtn"><span class="g">G</span> Google 계정으로 로그인</button>
+        <div class="divider"><span>또는 이메일</span></div>
+        <div class="seg" id="modeSeg">
+          <button data-m="in" class="on">로그인</button><button data-m="up">회원가입</button>
+        </div>
+        <div class="field" id="nameField" hidden style="margin-top:12px"><label>이름(선택)</label><input type="text" id="auName" autocomplete="name"></div>
+        <div class="field" style="margin-top:12px"><label>이메일</label><input type="text" id="auEmail" inputmode="email" autocomplete="email"></div>
+        <div class="field"><label>비밀번호 (6자 이상)</label><input type="password" id="auPw" autocomplete="current-password"></div>
+        <button class="btn primary block" id="auBtn">로그인</button>
+        <div class="row" style="justify-content:space-between;margin-top:10px">
+          <button class="link" id="resetPw">비밀번호를 잊으셨나요?</button>
+        </div>
+        <div class="auth-msg" id="auMsg"></div>
+      </section>`;
+    } else {
+      const u = cloud.user;
+      const total = Object.keys(store.stats).length;
+      body = `<section class="card">
+        <h1>내 계정</h1>
+        <div class="profile">
+          <span class="avatar big">${esc((u.name || u.email || "?").slice(0, 1).toUpperCase())}</span>
+          <div><b>${esc(u.name || "")}</b><div class="muted">${esc(u.email || "")}</div></div>
+        </div>
+        <div class="muted" id="syncText" style="margin:12px 0">${syncText()}</div>
+        <div class="stats" style="margin-bottom:14px">
+          <div class="stat"><b>${total}</b><span>풀어본 문제</span></div>
+          <div class="stat"><b>${wrongIds().length}</b><span>오답노트</span></div>
+          <div class="stat"><b>${Object.keys(store.known).length}</b><span>외운 용어</span></div>
+          <div class="stat"><b>${store.custom.length}</b><span>내 단어</span></div>
+        </div>
+        <div class="row">
+          <button class="btn" id="syncBtn">지금 저장</button>
+          <button class="btn" id="reloadBtn">계정에서 다시 불러오기</button>
+          <button class="btn danger" id="logoutBtn">로그아웃</button>
+        </div>
+      </section>`;
+    }
+    app.innerHTML = body + `
+      <section class="card">
+        <h2>학습 기록 관리</h2>
+        <p class="muted">${cloud && cloud.user ? "기록은 로그인한 계정에 자동 저장됩니다. 필요하면 파일로 백업할 수 있습니다." : "로그인하지 않으면 기록이 저장되지 않습니다. 파일로 백업하거나, 예전에 받은 백업 파일을 불러올 수 있습니다."}</p>
+        <div class="row">
+          <button class="btn small" id="exportBtn">백업 내보내기</button>
+          <label class="btn small" style="text-align:center">백업 불러오기<input type="file" id="importInp" accept=".json" hidden></label>
+          <button class="btn small danger" id="resetBtn">기록 전체 초기화</button>
+        </div>
+      </section>`;
+
+    const $ = id => document.getElementById(id);
+    if (cloud && cloud.enabled && !cloud.user) {
+      let mode = "in";
+      const msg = (t, ok) => { $("auMsg").textContent = t; $("auMsg").className = "auth-msg " + (ok ? "good" : "bad"); };
+      const busy = (on) => { $("auBtn").disabled = on; $("gBtn").disabled = on; };
+      $("gBtn").onclick = async () => {
+        busy(true); msg("");
+        try { await cloud.signInGoogle(); } catch (e) { msg(cloud.message(e)); } finally { busy(false); }
+      };
+      app.querySelectorAll("#modeSeg button").forEach(b => b.onclick = () => {
+        mode = b.dataset.m;
+        app.querySelectorAll("#modeSeg button").forEach(x => x.classList.toggle("on", x === b));
+        $("nameField").hidden = mode !== "up";
+        $("auBtn").textContent = mode === "up" ? "회원가입" : "로그인";
+        $("auPw").autocomplete = mode === "up" ? "new-password" : "current-password";
+        msg("");
+      });
+      const submitAuth = async () => {
+        const email = $("auEmail").value.trim(), pw = $("auPw").value;
+        if (!email || !pw) { msg("이메일과 비밀번호를 입력하세요."); return; }
+        busy(true); msg("");
+        try {
+          if (mode === "up") await cloud.signUpEmail(email, pw, $("auName").value.trim());
+          else await cloud.signInEmail(email, pw);
+        } catch (e) { msg(cloud.message(e)); busy(false); }
+      };
+      $("auBtn").onclick = submitAuth;
+      $("auPw").onkeydown = e => { if (e.key === "Enter") submitAuth(); };
+      $("resetPw").onclick = async () => {
+        const email = $("auEmail").value.trim();
+        if (!email) { msg("비밀번호 재설정 메일을 받을 이메일을 위 칸에 입력하세요."); return; }
+        try { await cloud.resetPassword(email); msg("비밀번호 재설정 메일을 보냈습니다. 메일함을 확인하세요.", true); }
+        catch (e) { msg(cloud.message(e)); }
+      };
+    }
+    if (cloud && cloud.user) {
+      $("syncBtn").onclick = async () => { dirty = true; setSync("saving"); await flush(); };
+      $("reloadBtn").onclick = async () => {
+        if (dirty && !confirm("아직 저장되지 않은 변경이 있습니다. 계정의 기록으로 덮어쓸까요?")) return;
+        dirty = false; await onAuthChanged(cloud.user);
+      };
+      $("logoutBtn").onclick = async () => {
+        await flush();
+        if (dirty && !confirm("저장되지 않은 변경이 있습니다. 그래도 로그아웃할까요?")) return;
+        await cloud.signOut();
+      };
+    }
     document.getElementById("exportBtn").onclick = () => {
       const blob = new Blob([JSON.stringify(store, null, 2)], { type: "application/json" });
       const a = document.createElement("a");
@@ -383,12 +599,12 @@
       const f = e.target.files[0]; if (!f) return;
       f.text().then(t => {
         const d = JSON.parse(t);
-        store = { stats: d.stats || {}, wrong: d.wrong || {}, known: d.known || {}, custom: d.custom || [] };
-        save(); renderNotes(); alert("불러왔습니다.");
+        store = normalize(d);
+        save(); renderAccount(); alert("불러왔습니다." + (cloud && cloud.user ? " 계정에 저장합니다." : ""));
       }).catch(() => alert("올바른 백업 파일이 아닙니다."));
     };
     document.getElementById("resetBtn").onclick = () => {
-      if (confirm("모든 풀이 기록, 오답노트, 외운 용어 체크를 삭제할까요? (내 단어는 유지됩니다) 되돌릴 수 없습니다.")) { store = { stats: {}, wrong: {}, known: {}, custom: store.custom || [] }; save(); renderNotes(); }
+      if (confirm("모든 풀이 기록, 오답노트, 외운 용어 체크를 삭제할까요? (내 단어는 유지됩니다) 되돌릴 수 없습니다.")) { store = { ...empty(), custom: store.custom }; save(); renderAccount(); }
     };
   }
 
@@ -446,7 +662,7 @@
     const terms = allTerms();
     const knownCount = terms.filter(g => store.known[g.id]).length;
     const cats = [MY_CAT, ...(window.GLOSSARY_CATEGORIES || [])];
-    app.innerHTML = `
+    app.innerHTML = noticeHTML() + `
       <section class="card">
         <h1>용어 학습 표</h1>
         <p class="muted">기출에 나온 AWS 용어 ${GLOSSARY_BASE.length}개${(store.custom || []).length ? ` + 내 단어 ${store.custom.length}개` : ""}.
@@ -674,12 +890,25 @@
   }
 
   // ---------- 라우팅 & 키보드 ----------
+  let currentPage = "home";
   function go(page) {
-    quiz = page === "quiz" ? quiz : null;
+    quiz = null;
+    currentPage = page;
     if (page === "notes") renderNotes();
     else if (page === "glossary") renderGlossary();
-    else renderHome();
+    else if (page === "account") renderAccount();
+    else { currentPage = "home"; renderHome(); }
     window.scrollTo(0, 0);
+  }
+  // 로그인 상태가 바뀌면 현재 화면을 다시 그림 (문제 푸는 중에는 화면 유지)
+  function rerender() {
+    updateBadge();
+    renderAccountChip();
+    if (quiz) return;
+    if (currentPage === "notes") renderNotes();
+    else if (currentPage === "glossary") renderGlossary();
+    else if (currentPage === "account") renderAccount();
+    else renderHome();
   }
   document.addEventListener("click", e => {
     const t = e.target.closest("[data-go]");
@@ -699,5 +928,7 @@
   });
 
   updateBadge();
+  renderAccountChip();
   renderHome();
+  if (window.Cloud) window.dispatchEvent(new Event("cloud-ready"));
 })();
