@@ -184,3 +184,14 @@ textarea { min-height: 60px; resize: vertical; }
   .pager { gap: 4px; }
   .pager button { min-width: 34px; padding: 7px 8px; font-size: 13px; }
 }
+
+/* 과목(카테고리) */
+.cat-seg { margin: 12px 0 14px; }
+.cat-seg button { display: flex; flex-direction: column; align-items: center; gap: 2px; font-weight: 600; }
+.cat-seg button small { font-size: 12px; font-weight: 400; color: var(--muted); }
+.cat-seg button.on small { color: var(--primary); }
+.tag.hot { background: #fff1d6; color: #a15c00; }
+@media (prefers-color-scheme: dark) { .tag.hot { background: #3a2c10; color: #f3c46b; } }
+.feedback .seen { margin-top: 8px; font-size: 13px; }
+.cat-seg .short { display: none; }
+@media (max-width: 520px) { .cat-seg .full { display: none; } .cat-seg .short { display: inline; } }

@@ -9,6 +9,12 @@
  *   중복 등으로 뺀 문제는 null 로 두면 번호만 건너뜁니다.
  */
 window.QUESTION_BANK = window.QUESTION_BANK || [];
+
+// 과목(카테고리) 목록 — 홈 화면에서 과목을 골라 풉니다.
+window.CATEGORIES = [
+  { id: "aws", name: "AWS 클라우드 프랙티셔너", short: "AWS CLF-C02" },
+  { id: "net2", name: "네트워크관리사 2급 필기", short: "네트워크관리사 2급" }
+];
 window.D1 = "Domain 1 · 클라우드 개념";
 window.D2 = "Domain 2 · 보안 및 규정 준수";
 window.D3 = "Domain 3 · 클라우드 기술 및 서비스";
@@ -20,6 +26,7 @@ window.addSet = function (exam, startNo, rows) {
     var no = startNo + i;
     var q = {
       id: "aws-" + String(no).padStart(3, "0"),
+      category: "aws",
       no: no,
       exam: exam,
       domain: r[0],
@@ -29,5 +36,28 @@ window.addSet = function (exam, startNo, rows) {
     };
     if (r[2]) q.choices = r[2];
     window.QUESTION_BANK.push(q);
+  });
+};
+
+/*
+ * 네트워크관리사 2급 등록
+ * 한 문제 = [번호, 문제, 보기 배열, 정답, 해설, 출제 회차("22.05 1번, 23.11 1번")]
+ */
+window.addNet = function (subject, rows) {
+  rows.forEach(function (r) {
+    if (!r) return;
+    var seen = r[5] ? r[5].split(",").map(function (x) { return x.trim(); }).filter(Boolean) : [];
+    window.QUESTION_BANK.push({
+      id: "net2-" + String(r[0]).padStart(3, "0"),
+      category: "net2",
+      no: r[0],
+      exam: subject,
+      question: r[1],
+      choices: r[2],
+      answer: r[3],
+      explanation: r[4],
+      seen: seen,
+      freq: seen.length
+    });
   });
 };

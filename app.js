@@ -41,8 +41,18 @@
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
     return a;
   }
-  const exams = [...new Set(BANK.map(q => q.exam).filter(Boolean))];
-  const domains = [...new Set(BANK.map(q => q.domain).filter(Boolean))].sort();
+  // ---------- 과목(카테고리) ----------
+  const CATS = (window.CATEGORIES || [{ id: "aws", name: "AWS" }]).filter(c => BANK.some(q => (q.category || "aws") === c.id));
+  const catOf = q => q.category || "aws";
+  const catName = id => (CATS.find(c => c.id === id) || {}).name || id;
+  const inCat = (cat) => BANK.filter(q => catOf(q) === cat);
+  const CAT_KEY = "examStudy.category";
+  function loadCat() {
+    try { const c = localStorage.getItem(CAT_KEY); if (CATS.some(x => x.id === c)) return c; } catch (e) { /* 무시 */ }
+    return CATS[0] ? CATS[0].id : "aws";
+  }
+  function saveCat(c) { try { localStorage.setItem(CAT_KEY, c); } catch (e) { /* 무시 */ } }
+  const freqTag = q => q.freq ? `<span class="tag ${q.freq >= 3 ? "hot" : ""}">${q.freq >= 3 ? "★ " : ""}출제 ${q.freq}회</span>` : "";
   function givenText(q, given) {
     if (given == null || given === "") return "";
     if (isMC(q)) return (Array.isArray(given) ? given : [given]).map(k => choiceLabel(q, +k)).join(" / ");
@@ -50,10 +60,15 @@
   }
 
   // ---------- 홈 ----------
-  const opts = { exam: "", domain: "", count: 10, source: "smart" };
+  const opts = { category: loadCat(), exam: "", domain: "", freq: 0, count: 10, source: "smart" };
 
   function renderHome() {
-    const ids = BANK.map(q => q.id);
+    const pool = inCat(opts.category);
+    const ids = pool.map(q => q.id);
+    const exams = [...new Set(pool.map(q => q.exam).filter(Boolean))];
+    const domains = [...new Set(pool.map(q => q.domain).filter(Boolean))].sort();
+    const hasFreq = pool.some(q => q.freq);
+    const catWrong = ids.filter(id => store.wrong[id]).length;
     const tried = ids.filter(id => store.stats[id]);
     const totalTries = tried.reduce((n, id) => n + store.stats[id].tries, 0);
     const totalCorrect = tried.reduce((n, id) => n + store.stats[id].correct, 0);
@@ -64,22 +79,26 @@
         <h1>기출 반복 학습</h1>
         <p class="muted">문제를 풀면 바로 정답과 이유를 알려주고, 틀린 문제는 오답노트에 자동 저장됩니다.
         오답노트 문제는 ${CLEAR_STREAK}번 연속으로 맞히면 졸업합니다.</p>
+        ${CATS.length > 1 ? `
+        <div class="seg cat-seg" id="catSeg">
+          ${CATS.map(c => `<button data-c="${c.id}" class="${opts.category === c.id ? "on" : ""}"><span class="full">${esc(c.name)}</span><span class="short">${esc(c.short || c.name)}</span><small>${inCat(c.id).length}문제</small></button>`).join("")}
+        </div>` : ""}
         <div class="stats">
-          <div class="stat"><b>${BANK.length}</b><span>전체 문제</span></div>
+          <div class="stat"><b>${pool.length}</b><span>전체 문제</span></div>
           <div class="stat"><b>${tried.length}</b><span>풀어본 문제</span></div>
           <div class="stat"><b>${acc}</b><span>정답률</span></div>
-          <div class="stat"><b>${wrongIds().length}</b><span>오답노트</span></div>
+          <div class="stat"><b>${catWrong}</b><span>오답노트</span></div>
         </div>
       </section>
 
       <section class="card">
-        <h2>문제 풀기</h2>
+        <h2>문제 풀기 <span class="muted" style="font-weight:400;font-size:14px">· ${esc(catName(opts.category))}</span></h2>
         ${exams.length > 1 ? `
         <div class="field">
-          <label>시험 선택</label>
+          <label>${hasFreq ? "과목 선택" : "시험 선택"}</label>
           <select id="examSel">
-            <option value="">전체 시험</option>
-            ${exams.map(e => `<option value="${esc(e)}" ${opts.exam === e ? "selected" : ""}>${esc(e)} (${BANK.filter(q => q.exam === e).length}문제)</option>`).join("")}
+            <option value="">${hasFreq ? "전체 과목" : "전체 시험"}</option>
+            ${exams.map(e => `<option value="${esc(e)}" ${opts.exam === e ? "selected" : ""}>${esc(e)} (${pool.filter(q => q.exam === e).length}문제)</option>`).join("")}
           </select>
         </div>` : ""}
         ${domains.length > 1 ? `
@@ -87,7 +106,14 @@
           <label>영역 선택</label>
           <select id="domainSel">
             <option value="">전체 영역</option>
-            ${domains.map(d => `<option value="${esc(d)}" ${opts.domain === d ? "selected" : ""}>${esc(d)} (${BANK.filter(q => q.domain === d).length}문제)</option>`).join("")}
+            ${domains.map(d => `<option value="${esc(d)}" ${opts.domain === d ? "selected" : ""}>${esc(d)} (${pool.filter(q => q.domain === d).length}문제)</option>`).join("")}
+          </select>
+        </div>` : ""}
+        ${hasFreq ? `
+        <div class="field">
+          <label>출제 빈도</label>
+          <select id="freqSel">
+            ${[[0, "전체"], [2, "2회 이상 나온 문제"], [3, "★ 3회 이상 나온 문제"]].map(([v, t]) => `<option value="${v}" ${opts.freq === v ? "selected" : ""}>${t} (${pool.filter(q => (q.freq || 0) >= v).length}문제)</option>`).join("")}
           </select>
         </div>` : ""}
         <div class="field">
@@ -111,6 +137,12 @@
     if (sel) sel.onchange = () => { opts.exam = sel.value; };
     const dsel = document.getElementById("domainSel");
     if (dsel) dsel.onchange = () => { opts.domain = dsel.value; };
+    const fsel = document.getElementById("freqSel");
+    if (fsel) fsel.onchange = () => { opts.freq = +fsel.value; };
+    document.querySelectorAll("#catSeg button").forEach(b => b.onclick = () => {
+      opts.category = b.dataset.c; opts.exam = ""; opts.domain = ""; opts.freq = 0;
+      saveCat(opts.category); renderHome();
+    });
     document.querySelectorAll("#countSeg button").forEach(b => b.onclick = () => { opts.count = +b.dataset.n; renderHome(); });
     document.querySelectorAll("#srcSeg button").forEach(b => b.onclick = () => { opts.source = b.dataset.s; renderHome(); });
     document.getElementById("startBtn").onclick = () => {
@@ -120,12 +152,13 @@
           opts.source === "wrong" ? "오답노트가 비어 있어요. 먼저 문제를 풀어보세요!" : "문제를 불러오지 못했습니다. data 폴더의 문제 파일을 확인하세요.";
         return;
       }
-      startQuiz(list, opts.source === "wrong" ? "오답노트" : (opts.domain || opts.exam || "전체 시험"));
+      const base = opts.domain || opts.exam || catName(opts.category);
+      startQuiz(list, opts.source === "wrong" ? "오답노트" : base + (opts.freq ? ` · ${opts.freq}회 이상` : ""));
     };
   }
 
-  function pickQuestions({ exam, domain, count, source }) {
-    let pool = BANK.filter(q => (!exam || q.exam === exam) && (!domain || q.domain === domain));
+  function pickQuestions({ category, exam, domain, freq, count, source }) {
+    let pool = BANK.filter(q => catOf(q) === category && (!exam || q.exam === exam) && (!domain || q.domain === domain) && (q.freq || 0) >= (freq || 0));
     if (source === "wrong") pool = pool.filter(q => store.wrong[q.id]);
     let ordered;
     if (source === "smart") {
@@ -163,10 +196,10 @@
       <section class="card">
         <div class="qhead">
           <span>${esc(quiz.label)} · ${quiz.i + 1} / ${total}</span>
-          <span>${q.no ? `<span class="tag">원본 ${q.no}번</span>` : ""}${inNote ? `<span class="tag bad">오답노트</span>` : ""}</span>
+          <span>${freqTag(q)}${q.no ? `<span class="tag">원본 ${q.no}번</span>` : ""}${inNote ? `<span class="tag bad">오답노트</span>` : ""}</span>
         </div>
         <div class="progress"><div style="width:${quiz.i / total * 100}%"></div></div>
-        ${q.domain ? `<div class="muted" style="font-size:13px">${esc(q.domain)}</div>` : ""}
+        ${(q.domain || q.exam) ? `<div class="muted" style="font-size:13px">${esc(q.domain || q.exam)}</div>` : ""}
         <div class="qtext">${esc(q.question)}</div>
         ${q.image ? `<img class="qimg" src="${esc(q.image)}" alt="문제 이미지">` : ""}
         ${isMC(q) ? `
@@ -256,6 +289,7 @@
         <div class="title">${ok ? "⭕ 정답입니다!" : "❌ 틀렸습니다"}</div>
         <div class="answer-line">정답: <b>${esc(answerText(q))}</b>${!ok ? ` <span class="muted">(내 답: ${esc(givenText(q, given))})</span>` : ""}</div>
         ${q.explanation ? `<div class="why"><b>💡 이유</b>\n${esc(q.explanation)}</div>` : ""}
+        ${q.seen && q.seen.length ? `<div class="muted seen">🗓 출제: ${esc(q.seen.join(", "))}</div>` : ""}
         ${noteMsg ? `<div class="muted" style="margin-top:8px">${noteMsg}</div>` : ""}
       </div>
       <button class="btn primary block" id="nextBtn" style="margin-top:12px">${last ? "결과 보기" : "다음 문제 →"}</button>`;
@@ -317,7 +351,7 @@
     const gt = givenText(q, given);
     return `
       <div class="list-item" data-id="${esc(q.id)}">
-        <div>${q.no ? `<span class="tag">원본 ${q.no}번</span>` : ""}${q.domain ? `<span class="tag">${esc(q.domain)}</span>` : ""}${w ? `<span class="tag bad">${w.count}회 틀림</span>` : ""}</div>
+        <div>${CATS.length > 1 ? `<span class="tag">${esc((CATS.find(c => c.id === catOf(q)) || {}).short || catOf(q))}</span>` : ""}${q.no ? `<span class="tag">원본 ${q.no}번</span>` : ""}${freqTag(q)}${(q.domain || q.exam) ? `<span class="tag">${esc(q.domain || q.exam)}</span>` : ""}${w ? `<span class="tag bad">${w.count}회 틀림</span>` : ""}</div>
         <div style="font-weight:600;margin-top:4px;white-space:pre-wrap">${esc(q.question)}</div>
         ${isMC(q) ? `<div class="muted">${q.choices.map((c, k) => `${NUMS[k] || k + 1} ${esc(c)}`).join("<br>")}</div>` : ""}
         ${gt ? `<div class="answer-line muted">내 답: ${esc(gt)}</div>` : ""}
@@ -333,12 +367,19 @@
   }
 
   // ---------- 오답노트 ----------
+  let notesCat = "";
   function renderNotes() {
-    const ids = wrongIds().sort((a, b) => (store.wrong[b].count - store.wrong[a].count) || (store.wrong[b].lastWrong || 0) - (store.wrong[a].lastWrong || 0));
+    const allIds = wrongIds();
+    if (notesCat && !CATS.some(c => c.id === notesCat)) notesCat = "";
+    const ids = allIds.filter(id => !notesCat || catOf(BY_ID[id]) === notesCat).sort((a, b) => (store.wrong[b].count - store.wrong[a].count) || (store.wrong[b].lastWrong || 0) - (store.wrong[a].lastWrong || 0));
     app.innerHTML = `
       <section class="card">
         <h1>오답노트</h1>
         <p class="muted">틀린 문제가 자동으로 모입니다. 많이 틀린 순서로 정렬돼요. ${CLEAR_STREAK}번 연속 맞히면 자동으로 빠집니다.</p>
+        ${CATS.length > 1 ? `
+        <div class="seg" id="noteCatSeg" style="margin-bottom:12px">
+          ${[["", "전체"], ...CATS.map(c => [c.id, c.short || c.name])].map(([id, t]) => `<button data-c="${id}" class="${notesCat === id ? "on" : ""}">${esc(t)} (${allIds.filter(x => !id || catOf(BY_ID[x]) === id).length})</button>`).join("")}
+        </div>` : ""}
         ${ids.length ? `
         <div class="row">
           <button class="btn primary" data-n="10">오답 10문제 풀기</button>
@@ -359,6 +400,7 @@
         </div>
       </section>`;
 
+    app.querySelectorAll("#noteCatSeg button").forEach(b => b.onclick = () => { notesCat = b.dataset.c; renderNotes(); });
     app.querySelectorAll("[data-n]").forEach(b => b.onclick = () => {
       const n = +b.dataset.n;
       const list = shuffle(ids.map(id => BY_ID[id]));
