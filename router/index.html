@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>라우터 콘솔 연습장</title>
+  <link rel="stylesheet" href="router.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="../index.html">📘 <span class="brand-text">기출 반복 학습</span></a>
+    <nav>
+      <a href="../index.html">홈</a>
+      <a class="on" href="./">라우터 연습</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section class="left">
+      <div class="toolbar">
+        <select id="labSel" aria-label="실습 선택"></select>
+        <button id="restartBtn" title="이 실습을 처음 상태로">↺ 실습 다시 시작</button>
+        <button id="powerBtn" title="저장하지 않은 설정이 사라집니다">⏻ 전원 재시작</button>
+        <button id="breakBtn" title="부팅 중에 누르면 ROMMON 진입">Break</button>
+      </div>
+      <div id="term" class="term" tabindex="0" aria-label="라우터 콘솔">
+        <div id="screen"></div>
+      </div>
+      <div class="mobile-input">
+        <input id="mInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="명령 입력 (예: sh ip int br)">
+        <div class="mkeys">
+          <button data-k="enter" class="primary">↵</button>
+          <button data-k="tab">Tab</button>
+          <button data-k="?">?</button>
+          <button data-k="up">↑</button>
+          <button data-k="down">↓</button>
+          <button data-k="ctrlz">^Z</button>
+          <button data-k="ctrlc">^C</button>
+          <button data-k="abort" title="Ctrl+Shift+6 (중단)">^6</button>
+        </div>
+      </div>
+      <p class="hint muted">PC에서는 화면 아무 데나 누르지 않아도 키를 치면 콘솔로 들어갑니다 · <b>Tab</b> 자동완성 · <b>?</b> 도움말 · <b>↑↓</b> 이전 명령 · 줄임말 OK (<code>conf t</code>, <code>sh ip int br</code>)</p>
+    </section>
+
+    <aside class="right">
+      <section class="card" id="labCard"></section>
+      <section class="card">
+        <h3>PC에서 본 연결</h3>
+        <p class="muted small">PC들이 실제로 통신되는지와, 안 되면 그 이유를 보여 줍니다.</p>
+        <ul id="pcList" class="pclist"></ul>
+      </section>
+      <section class="card">
+        <details>
+          <summary><b>네트워크 구성</b></summary>
+<pre class="topo">                ISP 203.0.113.1 ── Internet 8.8.8.8, 1.1.1.1
+                 │
+                 │ G0/1  203.0.113.0/30
+PC1 .10  ──┐     │
+PC3 DHCP ──┼─ SW1 ── R1 ──────────── R2 ── 172.16.0.0/24 ── SRV .10
+PC2 .20  ──┘   G0/0   S0/0/0 (DTE)
+         192.168.1.0/24  10.0.0.0/30</pre>
+          <table class="mini">
+            <tr><th>장비</th><th>주소</th></tr>
+            <tr><td>PC1 · PC2</td><td>192.168.1.10 · .20 /24, GW .1 (PC1은 TFTP 서버)</td></tr>
+            <tr><td>PC3</td><td>DHCP</td></tr>
+            <tr><td>R2</td><td>S0/1/0 10.0.0.2/30 · 2001:DB8:12::2 · Lo0 2.2.2.2<br>HDLC · RIPv2 · OSPF 영역 0 · EIGRP 100</td></tr>
+            <tr><td>SRV</td><td>172.16.0.10 · 2001:DB8:172::10</td></tr>
+            <tr><td>ISP</td><td>203.0.113.1/30 · 공인 대역 198.51.100.0/29</td></tr>
+            <tr><td>R1이 쓸 주소</td><td>G0/0 192.168.1.1/24 · S0/0/0 10.0.0.1/30 · G0/1 203.0.113.2/30 · Lo0 1.1.1.1/32 · IPv6 G0/0 2001:DB8:1::1/64, S0/0/0 2001:DB8:12::1/64</td></tr>
+          </table>
+        </details>
+      </section>
+      <section class="card">
+        <details>
+          <summary><b>키 조작법</b></summary>
+          <table class="mini">
+            <tr><td><kbd>Tab</kbd></td><td>명령어 자동완성</td></tr>
+            <tr><td><kbd>?</kbd></td><td>지금 칠 수 있는 명령 목록</td></tr>
+            <tr><td><kbd>↑</kbd> <kbd>↓</kbd> / <kbd>Ctrl+P</kbd> <kbd>Ctrl+N</kbd></td><td>이전·다음 명령</td></tr>
+            <tr><td><kbd>Space</kbd> <kbd>Enter</kbd> <kbd>q</kbd></td><td>--More-- 에서 다음 쪽 · 한 줄 · 그만</td></tr>
+            <tr><td><kbd>Ctrl+Z</kbd></td><td>특권 EXEC 모드로 바로</td></tr>
+            <tr><td><kbd>Ctrl+C</kbd> / <kbd>Esc</kbd></td><td>입력 취소 · 입력 줄 비우기</td></tr>
+            <tr><td><kbd>Ctrl+A</kbd> <kbd>Ctrl+E</kbd></td><td>줄 맨 앞 · 맨 끝</td></tr>
+            <tr><td><kbd>Ctrl+B</kbd> <kbd>Ctrl+F</kbd></td><td>커서 한 칸 왼쪽 · 오른쪽</td></tr>
+            <tr><td><kbd>Ctrl+U</kbd> <kbd>Ctrl+K</kbd> <kbd>Ctrl+D</kbd></td><td>커서 앞 · 뒤 · 한 글자 지우기</td></tr>
+            <tr><td><kbd>Ctrl+R</kbd> <kbd>Ctrl+L</kbd></td><td>입력 줄 다시 보기 · 화면 지우기</td></tr>
+            <tr><td><kbd>Ctrl+Shift+6</kbd></td><td>ping·traceroute·이름 조회 중단</td></tr>
+            <tr><td><kbd>Ctrl+Break</kbd> / <kbd>Pause</kbd></td><td>키보드로 Break 보내기</td></tr>
+          </table>
+        </details>
+      </section>
+    </aside>
+  </main>
+
+  <script src="engine.js"></script>
+  <script src="commands.js"></script>
+  <script src="labs-text.js"></script>
+  <script src="labs.js"></script>
+  <script src="ui.js"></script>
+</body>
+</html>

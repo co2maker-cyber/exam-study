@@ -1,0 +1,67 @@
+:root {
+  --bg: #f5f6f8; --card: #ffffff; --text: #1d2330; --muted: #6b7280; --line: #e3e6eb;
+  --primary: #3b5bdb; --primary-soft: #e8edff; --good: #1f9d55; --good-soft: #e3f6ea; --bad: #d93838; --bad-soft: #fde8e8;
+  --term-bg: #0d1117; --term-fg: #d6dde6; --term-dim: #7d8590; --term-accent: #7ee787;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #12151c; --card: #1b1f29; --text: #e6e8ee; --muted: #9aa1ad; --line: #2c3240; --primary: #7b93ff; --primary-soft: #232b48; --good: #4ccb7f; --good-soft: #17301f; --bad: #ff6b6b; --bad-soft: #3a1c1f; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif; line-height: 1.55; }
+a { color: inherit; text-decoration: none; }
+.topbar { position: sticky; top: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+.topbar a { padding: 6px 10px; border-radius: 8px; }
+.topbar a:hover, .topbar a.on { background: var(--primary-soft); }
+.brand { font-weight: 700; }
+.wrap { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; max-width: 1400px; margin: 0 auto; padding: 16px; }
+@media (max-width: 960px) { .wrap { grid-template-columns: 1fr; } }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.toolbar select, .toolbar button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+.toolbar select { flex: 1; min-width: 200px; }
+.toolbar button:hover { border-color: var(--primary); }
+#breakBtn.armed { border-color: #f0ad00; background: #fff4d6; color: #7a5300; }
+.term { background: var(--term-bg); color: var(--term-fg); border-radius: 12px; padding: 14px 16px; height: calc(100vh - 220px); min-height: 380px; overflow-y: auto; font-family: "D2Coding", "JetBrains Mono", Menlo, Consolas, "Courier New", monospace; font-size: 14px; line-height: 1.45; outline: none; white-space: pre-wrap; word-break: break-all; cursor: text; }
+.term:focus { box-shadow: 0 0 0 2px var(--primary); }
+.term .cur { background: var(--term-fg); color: var(--term-bg); }
+.term.blur .cur { background: transparent; outline: 1px solid var(--term-dim); color: var(--term-fg); }
+.term .more { background: var(--term-fg); color: var(--term-bg); }
+.term .sys { color: #f2cc60; }
+.hint { font-size: 13px; margin: 8px 2px 0; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+code, kbd { font-family: Menlo, Consolas, monospace; font-size: 12px; background: var(--primary-soft); padding: 1px 5px; border-radius: 4px; }
+.mobile-input { display: none; margin-top: 8px; }
+.mobile-input input { width: 100%; font: 15px Menlo, Consolas, monospace; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); }
+.mkeys { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.mkeys button { flex: 1; min-width: 44px; padding: 8px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); font: 14px Menlo, Consolas, monospace; }
+.mkeys button.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+@media (max-width: 960px), (pointer: coarse) { .mobile-input { display: block; } .term { height: 56vh; min-height: 300px; font-size: 12.5px; padding: 10px; } }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; margin-bottom: 14px; }
+.card h2 { font-size: 17px; margin: 0 0 6px; }
+.card h3 { font-size: 15px; margin: 0 0 4px; }
+.tasks { list-style: none; margin: 10px 0 0; padding: 0; }
+.tasks li { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 7px 0; border-top: 1px dashed var(--line); font-size: 14px; }
+.tasks li:first-child { border-top: none; }
+.tasks .ck { width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); margin-top: 2px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; }
+.tasks li.done .ck { background: var(--good); border-color: var(--good); }
+.tasks li.done .tt { color: var(--muted); }
+.tasks .note { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.tasks .hintbtn { background: none; border: none; color: var(--primary); font-size: 12px; padding: 0; cursor: pointer; text-decoration: underline; margin-left: 4px; }
+.tasks pre.h { margin: 6px 0 0; background: var(--term-bg); color: var(--term-fg); border-radius: 8px; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; }
+.progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin: 8px 0 2px; }
+.progress > div { height: 100%; background: var(--good); transition: width .3s; }
+.labdone { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--good-soft); color: var(--good); font-weight: 700; }
+details summary { cursor: pointer; }
+details pre.ans { background: var(--term-bg); color: var(--term-fg); border-radius: 8px; padding: 10px 12px; font-size: 12px; white-space: pre-wrap; margin: 8px 0 0; }
+.pclist { list-style: none; margin: 8px 0 0; padding: 0; }
+.pclist li { padding: 7px 0; border-top: 1px dashed var(--line); font-size: 13.5px; }
+.pclist li:first-child { border-top: none; }
+.pclist .st { display: inline-block; width: 22px; }
+.pclist .why { display: block; font-size: 12.5px; color: var(--bad); margin: 3px 0 0 22px; }
+.pclist .note { color: var(--muted); font-size: 12px; margin-left: 4px; }
+.pclist .whybtn { background: none; border: none; color: var(--primary); font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; margin-left: 4px; }
+.topo { font-size: 11px; overflow-x: auto; background: var(--bg); padding: 8px; border-radius: 8px; margin: 8px 0; }
+table.mini { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 6px; }
+table.mini td, table.mini th { border-top: 1px solid var(--line); padding: 5px 4px; vertical-align: top; text-align: left; }
+@media (max-width: 520px) { .brand-text { display: none; } .wrap { padding: 10px; } }
+@media (max-width: 700px) { .term { white-space: pre; word-break: normal; overflow-x: auto; font-size: 11.5px; } }
