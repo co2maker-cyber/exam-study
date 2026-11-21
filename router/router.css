@@ -14,7 +14,7 @@ a { color: inherit; text-decoration: none; }
 .topbar a:hover, .topbar a.on { background: var(--primary-soft); }
 .brand { font-weight: 700; }
 .wrap { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; max-width: 1400px; margin: 0 auto; padding: 16px; }
-@media (max-width: 960px) { .wrap { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .wrap { grid-template-columns: minmax(0, 1fr); } }
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .toolbar select, .toolbar button { font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
 .toolbar select { flex: 1; min-width: 200px; }

@@ -229,3 +229,15 @@ textarea { min-height: 60px; resize: vertical; }
   .topbar { padding: 8px 6px; }
   .topbar nav button, .topbar a.navlink { padding: 6px 5px; font-size: 14px; }
 }
+
+/* 실기 실습장 */
+.lab-card { display: flex; gap: 14px; align-items: center; color: inherit; text-decoration: none; }
+.lab-card:hover { border-color: var(--primary); }
+.lab-ic { font-size: 30px; flex: none; }
+.lab-body { flex: 1; min-width: 0; }
+.lab-body h2 { margin-bottom: 4px; }
+.lab-body p { margin: 0 0 10px; }
+.lab-prog { height: 6px; border-radius: 99px; background: var(--bg); overflow: hidden; margin-bottom: 4px; }
+.lab-prog div { height: 100%; background: var(--primary); }
+.lab-go { font-size: 26px; color: var(--muted); flex: none; }
+.small { font-size: 13px; }

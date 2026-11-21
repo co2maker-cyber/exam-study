@@ -729,12 +729,51 @@
     return null;
   }
 
+  // ---------- 실기 실습장 ----------
+  const LABS = [
+    { href: "router/", icon: "🛜", name: "라우터 콘솔 연습장", key: "routerLab.v1", total: 14,
+      desc: "Cisco IOS 명령어를 콘솔에 직접 입력 · 정적 경로, RIPv2, OSPF, EIGRP, DHCP, PAT, ACL, SSH, ROMMON 복구" },
+    { href: "windows/", icon: "🪟", name: "윈도우 서버 실습장", key: "winlab.done", total: 21,
+      desc: "Windows Server 2016 관리 도구 화면 · TCP/IP, DNS, DHCP, IIS·FTP, Active Directory, 보안 정책, 공유·NTFS, 방화벽" },
+    { href: "linux/", icon: "🐧", name: "리눅스 서버 실습장", key: "lxlab.done", total: 21,
+      desc: "CentOS 7 터미널 · 권한·사용자, ifcfg·nmcli, systemctl·firewalld, SSH·httpd, yum·rpm, mount·fstab, cron, vi" }
+  ];
+  function labDone(l) {
+    try {
+      const v = JSON.parse(localStorage.getItem(l.key)) || {};
+      const d = l.key === "routerLab.v1" ? (v.done || {}) : v;
+      return Object.keys(d).filter(k => d[k] && k !== "0" && k !== "free").length;
+    } catch (e) { return 0; }
+  }
+  function renderLabs() {
+    app.innerHTML = `
+      <section class="card">
+        <h1>실기 실습장</h1>
+        <p class="muted">네트워크관리사 2급 실기 범위를 직접 해 보고 자동 채점받는 연습 도구입니다.
+        과제를 고르고 설정을 마친 뒤 [채점하기]를 누르면 틀린 항목의 기대 값과 현재 값이 함께 나옵니다.
+        완료 표시는 이 기기에만 저장됩니다.</p>
+      </section>
+      ${LABS.map(l => { const d = Math.min(labDone(l), l.total); return `
+      <a class="card lab-card" href="${l.href}">
+        <div class="lab-ic" aria-hidden="true">${l.icon}</div>
+        <div class="lab-body">
+          <h2>${l.name}</h2>
+          <p class="muted">${l.desc}</p>
+          <div class="lab-prog"><div style="width:${d / l.total * 100}%"></div></div>
+          <span class="muted small">완료 ${d} / ${l.total}</span>
+        </div>
+        <span class="lab-go" aria-hidden="true">›</span>
+      </a>`; }).join("")}
+      <p class="muted small">실제 장비·OS 동작을 단순화한 연습용이라 화면 문구와 명령 출력이 실제와 조금 다를 수 있습니다.</p>`;
+  }
+
   // ---------- 라우팅 & 키보드 ----------
   function go(page) {
     quiz = page === "quiz" ? quiz : null;
     if (page === "notes") renderNotes();
     else if (page === "glossary") renderGlossary();
     else if (page === "practice" && window.renderPractice) window.renderPractice(app);
+    else if (page === "labs") renderLabs();
     else renderHome();
     window.scrollTo(0, 0);
   }
