@@ -457,6 +457,7 @@
   window.GLOSSARY_CATEGORIES = Object.values(C);
   window.GLOSSARY = G.map(([term, ko, cat, meaning, tip, alias], i) => ({
     id: "g" + String(i + 1).padStart(3, "0"),
+    subject: "aws",
     term, ko, cat, meaning, tip, alias: alias || []
   }));
 })();

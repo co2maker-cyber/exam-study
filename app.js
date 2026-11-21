@@ -442,22 +442,25 @@
   const QTEXT = BANK.map(q => (q.question + " " + (q.choices || []).join(" ")).toLowerCase());
   const relCache = new Map();
 
+  const gsubj = () => opts.category;
   function allTerms() {
-    const mine = (store.custom || []).map(c => ({
+    const sub = gsubj();
+    const mine = (store.custom || []).filter(c => !c.subject || c.subject === sub).map(c => ({
       id: c.id, term: c.term, ko: c.ko || "내가 추가한 단어", cat: MY_CAT,
       meaning: c.meaning, tip: c.tip || "", alias: [], source: c.source || "", custom: true
     }));
-    return mine.concat(GLOSSARY_BASE);
+    return mine.concat(GLOSSARY_BASE.filter(g => (g.subject || "aws") === sub));
   }
 
   function relatedIds(g) {
-    const key = g.id + "|" + g.term;
+    const sub = g.subject || gsubj();
+    const key = sub + "|" + g.id + "|" + g.term;
     if (relCache.has(key)) return relCache.get(key);
     const keys = [g.term.replace(/\s*\(.*?\)\s*/g, " ").trim(), ...g.alias].map(k => k.toLowerCase()).filter(k => k.length >= 2);
     const tests = keys.map(k => /^[a-z0-9 .\-]+$/.test(k)
       ? (t => new RegExp("(^|[^a-z0-9])" + k.replace(/[.\-]/g, "\\$&") + "($|[^a-z0-9])").test(t))
       : (t => t.includes(k)));
-    const ids = BANK.filter((q, i) => tests.some(f => f(QTEXT[i]))).map(q => q.id);
+    const ids = BANK.filter((q, i) => catOf(q) === sub && tests.some(f => f(QTEXT[i]))).map(q => q.id);
     relCache.set(key, ids);
     return ids;
   }
@@ -488,10 +491,15 @@
     const terms = allTerms();
     const knownCount = terms.filter(g => store.known[g.id]).length;
     const cats = [MY_CAT, ...(window.GLOSSARY_CATEGORIES || [])];
+    const isNet = gsubj() === "net2";
+    const baseN = terms.filter(g => !g.custom).length, mineN = terms.length - baseN;
     app.innerHTML = `
       <section class="card">
         <h1>용어 학습 표</h1>
-        <p class="muted">기출에 나온 AWS 용어 ${GLOSSARY_BASE.length}개${(store.custom || []).length ? ` + 내 단어 ${store.custom.length}개` : ""}.
+        <div class="seg cat-seg" id="glSubj">
+          ${CATS.map(c => `<button data-c="${c.id}" class="${gsubj() === c.id ? "on" : ""}"><span class="full">${esc(c.name)}</span><span class="short">${esc(c.short || c.name)}</span><small>${GLOSSARY_BASE.filter(g => (g.subject || "aws") === c.id).length}개</small></button>`).join("")}
+        </div>
+        <p class="muted">${isNet ? "네트워크관리사 용어(라우팅·RIP·OSPF·서브넷·DHCP 등)" : "기출에 나온 AWS 용어"} ${baseN}개${mineN ? ` + 내 단어 ${mineN}개` : ""}.
         '뜻 가리기'로 스스로 테스트하고, 외운 용어는 체크하세요.</p>
         <div class="progress" style="margin:10px 0 4px"><div id="glBar"></div></div>
         <div class="muted" style="font-size:13px" id="glBarText"></div>
@@ -501,14 +509,14 @@
         <h2>단어 추가 · 뜻 찾기</h2>
         <p class="muted" style="margin-top:-6px">모르는 단어를 입력하면 용어 표 → 기출 해설 → 위키백과 순서로 뜻을 찾아 줍니다. 찾은 뜻을 고쳐서 '내 단어'로 저장하세요.</p>
         <div class="row">
-          <input type="text" id="lkWord" placeholder="예: Kinesis, 서브넷, NAT 게이트웨이" autocomplete="off" style="flex:3">
+          <input type="text" id="lkWord" placeholder="${isNet ? "예: VRRP, 서브넷, 스위칭 허브" : "예: Kinesis, 서브넷, NAT 게이트웨이"}" autocomplete="off" style="flex:3">
           <button class="btn primary" id="lkBtn" style="flex:1">뜻 찾기</button>
         </div>
         <div id="lkResult"></div>
       </section>
 
       <section class="card gl-controls">
-        <input type="text" id="glSearch" placeholder="표에서 검색 (예: S3, 캐시, 라이선스)" value="${esc(gopts.q)}" autocomplete="off">
+        <input type="text" id="glSearch" placeholder="${isNet ? "표에서 검색 (예: OSPF, 224.0.0.5, AD)" : "표에서 검색 (예: S3, 캐시, 라이선스)"}" value="${esc(gopts.q)}" autocomplete="off">
         <div class="row" style="margin-top:10px">
           <select id="glCat" style="flex:2">
             <option value="">전체 분류</option>
@@ -590,6 +598,12 @@
     };
     draw();
 
+    document.querySelectorAll("#glSubj button").forEach(b => b.onclick = () => {
+      if (opts.category === b.dataset.c) return;
+      opts.category = b.dataset.c; opts.exam = ""; opts.domain = ""; opts.freq = 0; saveCat(b.dataset.c);
+      gopts.cat = ""; gopts.q = ""; gopts.page = 1;
+      renderGlossary();
+    });
     const search = document.getElementById("glSearch");
     search.oninput = () => { gopts.q = search.value; gopts.page = 1; draw(); };
     document.getElementById("glCat").onchange = e => { gopts.cat = e.target.value; gopts.page = 1; draw(); };
@@ -610,11 +624,11 @@
       const local = allTerms().filter(g => [g.term, g.ko, ...g.alias].some(s => s.toLowerCase().includes(w) || (s.length >= 2 && w.includes(s.toLowerCase())))).slice(0, 3);
       const snippets = [];
       for (const q of BANK) {
-        if (!q.explanation || snippets.length >= 3) continue;
+        if (!q.explanation || snippets.length >= 3 || catOf(q) !== gsubj()) continue;
         const line = q.explanation.split("\n").find(l => l.toLowerCase().includes(w));
         if (line) snippets.push({ no: q.no, text: line.replace(/^[·\s]+/, "") });
       }
-      const qCount = QTEXT.filter(t => t.includes(w)).length;
+      const qCount = QTEXT.filter((t, i) => catOf(BANK[i]) === gsubj() && t.includes(w)).length;
       const enc = encodeURIComponent(word);
 
       lkResult.innerHTML = `
@@ -625,8 +639,8 @@
           ${snippets.map((s, i) => `<div class="lk-item"><span class="tag">원본 ${s.no}번</span> ${esc(s.text)} <button class="link lk-snip" data-i="${i}">이 문장 사용</button></div>`).join("")}</div>` : ""}
         <div class="lk-block" id="lkWiki"><div class="lk-title">🌐 위키백과</div><div class="muted">찾는 중…</div></div>
         <div class="lk-links muted">더 찾아보기:
-          <a href="https://docs.aws.amazon.com/search/doc-search.html?searchPath=documentation&searchQuery=${enc}" target="_blank" rel="noopener">AWS 공식 문서 ↗</a> ·
-          <a href="https://www.google.com/search?q=${encodeURIComponent("AWS " + word)}" target="_blank" rel="noopener">Google ↗</a>
+          ${isNet ? "" : `<a href="https://docs.aws.amazon.com/search/doc-search.html?searchPath=documentation&searchQuery=${enc}" target="_blank" rel="noopener">AWS 공식 문서 ↗</a> ·`}
+          <a href="https://www.google.com/search?q=${encodeURIComponent((isNet ? "네트워크 " : "AWS ") + word)}" target="_blank" rel="noopener">Google ↗</a>
         </div>
         <div id="lkEditor"></div>`;
 
@@ -692,7 +706,7 @@
         if (dup) { msg.textContent = `'${t}'은(는) 이미 내 단어에 있어요. 표에서 '수정'을 눌러 고치세요.`; return; }
         const data = { term: t, meaning: m, tip: document.getElementById("edTip").value.trim(), source: document.getElementById("edSource").value };
         if (editId) Object.assign(store.custom.find(c => c.id === editId), data);
-        else store.custom.unshift({ id: "c" + Date.now(), added: Date.now(), ...data });
+        else store.custom.unshift({ id: "c" + Date.now(), added: Date.now(), subject: gsubj(), ...data });
         save();
         gopts.q = ""; gopts.cat = MY_CAT; gopts.known = "all"; gopts.page = 1;
         renderGlossary();
@@ -720,6 +734,7 @@
     quiz = page === "quiz" ? quiz : null;
     if (page === "notes") renderNotes();
     else if (page === "glossary") renderGlossary();
+    else if (page === "practice" && window.renderPractice) window.renderPractice(app);
     else renderHome();
     window.scrollTo(0, 0);
   }
