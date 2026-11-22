@@ -111,7 +111,7 @@
     if (router.state !== "exec") return;
     const c = S.complete(gmode(), buf);
     if (typeof c === "string") { buf = c; cur = buf.length; render(); }
-    else if (c && c.cands) { write((noPrompt ? "" : promptText()) + buf + "\n" + c.cands.join("  ") + "\n\n"); noPrompt = false; render(); }
+    else if (c && (c.cands || c.hint)) { write((noPrompt ? "" : promptText()) + buf + "\n" + (c.hint || c.cands.join("  ")) + "\n\n"); noPrompt = false; render(); }
   }
   function ctrlZ() {
     if (["config", "if", "rip", "ospf", "eigrp", "line", "dhcp", "nacl"].includes(router.mode)) {

@@ -48,7 +48,7 @@ R1이 쓸 주소: G0/0 `192.168.1.1/24`, S0/0/0 `10.0.0.1/30`, G0/1 `203.0.113.2
 
 | 키 | 동작 |
 |---|---|
-| `Tab` | 명령어 자동완성. 후보가 여럿이면 공통 앞부분까지 채우고, 한 번 더 누르면 후보 목록 표시(예: `ip ro` → `ip rout` → `route  routing`). 인터페이스 이름도 완성(`s` → `Serial`, `g0/1` → `GigabitEthernet0/1`) |
+| `Tab` | 명령어 자동완성. 후보가 여럿이면 공통 앞부분까지 채우고, 한 번 더 누르면 후보 목록 표시(예: `ip ro` → `ip rout` → `route  routing`). 인터페이스 이름도 완성(`s` → `Serial`, `loopback` → `Loopback`, `g0/1` → `GigabitEthernet0/1`) |
 | `?` | 지금 칠 수 있는 명령 목록 (입력 중 바로 표시) |
 | `↑` `↓` | 이전 명령 불러오기 |
 | `Space` / `Enter` / `q` | `--More--`에서 다음 쪽 / 한 줄 / 그만 |
@@ -94,6 +94,9 @@ R1이 쓸 주소: G0/0 `192.168.1.1/24`, S0/0/0 `10.0.0.1/30`, G0/1 `203.0.113.2
 | `show ip protocols` | 동작 중인 라우팅 프로토콜 |
 | `show cdp neighbors` | 포트마다 붙은 장비 |
 | `show interfaces s0/0/0` | 캡슐화, 대역폭, 상태 자세히 |
+
+- 사용자 모드(`R1>`)에서도 조회용 `show`(ip route, ip interface brief, interfaces 등)를 쓸 수 있습니다. `show running-config`·`startup-config`·`flash:`·`logging`은 특권 모드(`R1#`) 전용입니다.
+- 설정 모드에서 확인할 때는 앞에 `do`를 붙입니다(`do show ip route`). `do` 뒤에서도 `Tab` 완성이 됩니다.
 | `terminal length 0` | --More-- 없이 한 번에 출력 |
 
 ### 저장과 복구

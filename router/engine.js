@@ -1169,8 +1169,16 @@ dir <이름>`
   // Tab 완성: 한 개면 완성, 여러 개면 공통 앞부분까지 늘리고 더 못 늘리면 후보 목록을 돌려줌
   const IF_NAMES = ["GigabitEthernet", "Serial", "Loopback"];
   function complete(mode, line) {
+    // do <명령>: 뒤쪽을 특권 모드 명령으로 보고 완성
+    const dm = mode !== "user" && mode !== "priv" && mode !== "privx" && line.match(/^(\s*do\s+)(.*)$/i);
+    if (dm && GRAMMAR.privx) {
+      const c = complete("privx", dm[2]);
+      return typeof c === "string" ? dm[1] + c : c;
+    }
     const h = helpFor(mode, line);
     if (!h.partial) return null;
+    // 하위 모드(config-if 등)에서 안 맞으면 전역 설정 명령으로 다시 시도(실제 IOS도 하위 모드에서 전역 명령 허용)
+    if (SUBMODES.includes(mode) && !h.items.length) return complete("config", line);
     const partial = (line.match(/\S+$/) || [""])[0];
     const low = partial.toLowerCase();
     const keys = h.items.map(x => x[0]);
@@ -1178,9 +1186,13 @@ dir <이름>`
     if (keys.includes("<인터페이스>")) {
       const full = normIface(partial);
       if (full && !cands.length) return line.replace(/\S+$/, full) + " ";
-      IF_NAMES.forEach(n => { if (n.toLowerCase().startsWith(low) && n.toLowerCase() !== low) cands.push(n); });
+      IF_NAMES.forEach(n => { if (n.toLowerCase().startsWith(low) && n !== partial) cands.push(n); });
     }
-    if (!cands.length) return null;
+    if (!cands.length) {
+      // 설정 모드에서 show 등 특권 명령을 그대로 친 경우 do 안내
+      if (mode !== "user" && mode !== "priv" && mode !== "privx" && GRAMMAR.privx && /^\s*sh(o(w)?)?(\s|$)/i.test(line)) return { hint: "% 설정 모드에서는 앞에 do를 붙이세요 (예: do show ip route)" };
+      return null;
+    }
     const isIf = x => IF_NAMES.includes(x);
     if (cands.length === 1) return line.replace(/\S+$/, cands[0]) + (isIf(cands[0]) ? "" : " ");
     let lcp = cands[0].toLowerCase();

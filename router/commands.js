@@ -6,6 +6,10 @@
   // EXEC 모드의 exit(=logout)는 목록에 없지만 실제 IOS처럼 동작하게 숨은 명령으로 추가
   S.GRAMMAR.user.push({ pat: "exit", toks: ["exit"], hidden: true });
   S.GRAMMAR.privx = S.GRAMMAR.priv.concat(S.GRAMMAR.user);
+  // 사용자 모드(>)에서도 실제 IOS처럼 조회용 show는 쓸 수 있게 함(설정 파일·플래시·로그 등은 특권 모드 전용)
+  const PRIV_ONLY_SHOW = /^show (running-config|startup-config|flash:|logging|debugging|crypto|controllers|archive)/;
+  S.USER_SHOW = new Set(S.GRAMMAR.priv.filter(p => p.pat.startsWith("show ") && !PRIV_ONLY_SHOW.test(p.pat)).map(p => p.pat));
+  S.GRAMMAR.priv.filter(p => S.USER_SHOW.has(p.pat)).forEach(p => S.GRAMMAR.user.push({ ...p, hidden: true }));
   const pad = (s, n) => String(s).padEnd(n);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -70,7 +74,7 @@
       if (!g.error) { p = g; runMode = "config"; this.mode = "config"; this.ctx = {}; }
     }
     if (p.error) return this.parseError(p, mode, line, io);
-    const fn = (H[runMode] || {})[p.pat] || (runMode === "priv" ? H.user[p.pat] : null) || (p.implicit ? H.common[p.pat] : null);
+    const fn = (H[runMode] || {})[p.pat] || (runMode === "priv" ? H.user[p.pat] : null) || (runMode === "user" && S.USER_SHOW.has(p.pat) ? H.priv[p.pat] : null) || (p.implicit ? H.common[p.pat] : null);
     if (!fn) { io.out("% 이 연습장에서는 아직 지원하지 않는 명령입니다.\n"); return; }
     await fn.call(this, p.args, io, line);
   };
