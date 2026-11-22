@@ -107,7 +107,12 @@
     else { const lines = h.items.map(([k, d]) => "  " + pad(k, 22) + (d || "")); if (h.cr) lines.push("  <cr>"); write(lines.join("\n") + "\n\n"); }
     noPrompt = false;
   }
-  function doTab() { if (router.state !== "exec") return; const c = S.complete(gmode(), buf); if (c) { buf = c; cur = buf.length; render(); } }
+  function doTab() {
+    if (router.state !== "exec") return;
+    const c = S.complete(gmode(), buf);
+    if (typeof c === "string") { buf = c; cur = buf.length; render(); }
+    else if (c && c.cands) { write((noPrompt ? "" : promptText()) + buf + "\n" + c.cands.join("  ") + "\n\n"); noPrompt = false; render(); }
+  }
   function ctrlZ() {
     if (["config", "if", "rip", "ospf", "eigrp", "line", "dhcp", "nacl"].includes(router.mode)) {
       write(promptText() + buf + "^Z\n"); buf = ""; cur = 0; router.mode = "priv"; router.ctx = {}; router.configExit(); render();

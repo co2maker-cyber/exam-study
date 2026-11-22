@@ -1166,12 +1166,27 @@ dir <이름>`
     }
     return { items: [...items.entries()].sort((a, b) => (PH.includes(a[0]) - PH.includes(b[0])) || a[0].localeCompare(b[0])), cr, partial: !endsSpace };
   }
+  // Tab 완성: 한 개면 완성, 여러 개면 공통 앞부분까지 늘리고 더 못 늘리면 후보 목록을 돌려줌
+  const IF_NAMES = ["GigabitEthernet", "Serial", "Loopback"];
   function complete(mode, line) {
     const h = helpFor(mode, line);
     if (!h.partial) return null;
-    const lits = h.items.map(x => x[0]).filter(x => !PH.includes(x));
-    if (lits.length !== 1) return null;
-    return line.replace(/\S+$/, lits[0]) + " ";
+    const partial = (line.match(/\S+$/) || [""])[0];
+    const low = partial.toLowerCase();
+    const keys = h.items.map(x => x[0]);
+    const cands = keys.filter(x => !PH.includes(x));
+    if (keys.includes("<인터페이스>")) {
+      const full = normIface(partial);
+      if (full && !cands.length) return line.replace(/\S+$/, full) + " ";
+      IF_NAMES.forEach(n => { if (n.toLowerCase().startsWith(low) && n.toLowerCase() !== low) cands.push(n); });
+    }
+    if (!cands.length) return null;
+    const isIf = x => IF_NAMES.includes(x);
+    if (cands.length === 1) return line.replace(/\S+$/, cands[0]) + (isIf(cands[0]) ? "" : " ");
+    let lcp = cands[0].toLowerCase();
+    for (const c of cands) { let i = 0; while (i < lcp.length && i < c.length && lcp[i] === c[i].toLowerCase()) i++; lcp = lcp.slice(0, i); }
+    if (lcp.length > low.length) return line.replace(/\S+$/, cands[0].slice(0, lcp.length));
+    return { cands: cands.sort() };
   }
 
   window.RouterSim = { Router, parse, helpFor, complete, GRAMMAR, COMMAND_COUNT, W, util: { ip2n, n2ip, isIp, maskLen, lenMask, netOf, inNet, wcMatch, classfulNet, classfulLen, brdOf, v6expand, v6short, v6inNet, parseV6Pfx, type5, type7, type9, normIface, shortIf, isLoop, newIface, factoryConfig, clone, PHYS, MAC, CONNECTED } };
