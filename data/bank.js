@@ -66,7 +66,7 @@ window.addNet = function (subject, rows) {
 
 /*
  * 정보통신 유지보수 관리 — 강의자료로 만든 예상문제
- * 한 문제 = [문제, 보기 배열, 정답, 해설]  (번호는 등록 순서대로 자동)
+ * 한 문제 = [문제, 보기 배열, 정답, 해설, 그림 경로(선택)]  (번호는 등록 순서대로 자동)
  */
 window.addIct = function (section, rows) {
   rows.forEach(function (r) {
@@ -79,7 +79,8 @@ window.addIct = function (section, rows) {
       question: r[0],
       choices: r[1],
       answer: r[2],
-      explanation: r[3]
+      explanation: r[3],
+      image: r[4] || undefined
     });
   });
 };

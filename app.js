@@ -1,20 +1,57 @@
 (function () {
   "use strict";
 
+  /*
+   * 학습 엔진 개요 (근거는 '학습 원리' 페이지 참고)
+   *  - 인출 연습: 읽기보다 문제 풀기로 기억을 꺼내게 함
+   *  - 간격 반복: 맞힐수록 1→3→7→16→35→80일 간격으로 다시 냄
+   *  - 연속 재학습: 틀린 문제는 같은 회차 안에서 몇 문제 뒤 한 번 더
+   *  - 교차 학습: 오늘의 학습은 여러 단원을 섞어서 냄
+   *  - 확신도: 확신했는데 틀린 문제(착각)를 따로 표시, 찍어서 맞힌 문제는 곧 다시
+   */
   const BANK = (window.QUESTION_BANK || []).filter(q => q && q.id && q.question);
   const BY_ID = Object.fromEntries(BANK.map(q => [q.id, q]));
   const STORE_KEY = "examStudy.v1";
-  const CLEAR_STREAK = 2; // 오답노트 문제를 연속으로 이만큼 맞히면 오답노트에서 자동 삭제
+  const CLEAR_STREAK = 2; // 오답노트: 서로 다른 날 이만큼 연속으로 맞히면 졸업
   const NUMS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
   const app = document.getElementById("app");
 
+  // ---------- 날짜 · 간격 ----------
+  const DAY = 86400000;
+  const dayNum = (t = Date.now()) => Math.floor((t - new Date(t).getTimezoneOffset() * 60000) / DAY);
+  const dayKey = n => new Date(n * DAY).toISOString().slice(0, 10);
+  const IV = [0, 1, 3, 7, 16, 35, 80];           // 단계별 다음 복습까지 일수
+  const MEM = ["새 문제", "학습 중", "익숙해짐", "장기 기억"];
+  const memLevel = r => !r ? 0 : r.lv <= 2 ? 1 : r.lv <= 4 ? 2 : 3;
+  const RELEARN_GAP = 4;                          // 틀린 문제를 몇 문제 뒤에 다시 낼지
+  const SESSION_DUE_MAX = 30;                     // 한 번에 내는 복습 문제 최대 수
+  const CONF = { sure: "확실해요", mid: "애매해요", guess: "찍었어요" };
+
   // ---------- 저장소 ----------
+  function blank() {
+    return { stats: {}, wrong: {}, known: {}, custom: [], srs: {}, days: {}, settings: { conf: true, recall: false, newPerDay: 10 } };
+  }
+  function normalize(s) {
+    const b = blank();
+    if (!s || typeof s !== "object") return b;
+    const o = {};
+    for (const k of ["stats", "wrong", "known", "srs", "days"]) o[k] = s[k] && typeof s[k] === "object" ? s[k] : {};
+    o.custom = Array.isArray(s.custom) ? s.custom : [];
+    o.settings = { ...b.settings, ...(s.settings || {}) };
+    // 이전 버전 기록(풀이 통계만 있음)을 복습 일정으로 옮김
+    const today = dayNum();
+    for (const id of Object.keys(o.stats)) {
+      if (o.srs[id]) continue;
+      const st = o.stats[id];
+      const ld = st.last ? dayNum(st.last) : today;
+      if (o.wrong[id]) o.srs[id] = { lv: 1, due: today, lapses: o.wrong[id].count || 1, last: st.last || Date.now() };
+      else if (st.tries >= 2 && st.correct === st.tries) o.srs[id] = { lv: 2, due: ld + IV[2], lapses: 0, last: st.last || Date.now() };
+      else o.srs[id] = { lv: 1, due: ld + IV[1], lapses: st.tries - st.correct, last: st.last || Date.now() };
+    }
+    return o;
+  }
   function load() {
-    try {
-      const s = JSON.parse(localStorage.getItem(STORE_KEY));
-      if (s && typeof s === "object") return { stats: s.stats || {}, wrong: s.wrong || {}, known: s.known || {}, custom: s.custom || [] };
-    } catch (e) { /* 무시 */ }
-    return { stats: {}, wrong: {}, known: {}, custom: [] };
+    try { return normalize(JSON.parse(localStorage.getItem(STORE_KEY))); } catch (e) { return blank(); }
   }
   let store = load();
   function save() {
@@ -41,6 +78,17 @@
     for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
     return a;
   }
+  // 같은 단원이 연달아 몰리지 않게 섞기(교차 학습)
+  function interleave(list) {
+    const groups = {};
+    shuffle(list).forEach(q => (groups[q.exam || q.domain || ""] = groups[q.exam || q.domain || ""] || []).push(q));
+    const keys = shuffle(Object.keys(groups)), out = [];
+    while (out.length < list.length) keys.forEach(k => { if (groups[k].length) out.push(groups[k].shift()); });
+    return out;
+  }
+  const fmtDate = n => { const d = new Date(n * DAY); return `${d.getUTCMonth() + 1}/${d.getUTCDate()}`; };
+  const inDays = n => n <= 0 ? "오늘" : n === 1 ? "내일" : `${n}일 뒤`;
+
   // ---------- 과목(카테고리) ----------
   const CATS = (window.CATEGORIES || [{ id: "aws", name: "AWS" }]).filter(c => BANK.some(q => (q.category || "aws") === c.id));
   const catOf = q => q.category || "aws";
@@ -59,102 +107,211 @@
     return String(given);
   }
 
+  // ---------- 학습 일정 ----------
+  function todayLog() { const k = dayKey(dayNum()); return store.days[k] || (store.days[k] = { n: 0, ok: 0, newBy: {} }); }
+  const newDoneToday = cat => ((store.days[dayKey(dayNum())] || {}).newBy || {})[cat] || 0;
+  function plan(cat, exam) {
+    const t = dayNum();
+    const pool = BANK.filter(q => catOf(q) === cat && (!exam || q.exam === exam));
+    const s = id => store.srs[id];
+    const due = pool.filter(q => s(q.id) && s(q.id).due <= t)
+      .sort((a, b) => (!!s(b.id).hyper - !!s(a.id).hyper) || (s(a.id).due - s(b.id).due) || (s(a.id).lv - s(b.id).lv));
+    const newLeft = Math.max(0, (store.settings.newPerDay || 10) - newDoneToday(cat));
+    // 새 문제: 출제 빈도가 높은 것부터(같으면 무작위)
+    const fresh = shuffle(pool.filter(q => !s(q.id))).sort((a, b) => (b.freq || 0) - (a.freq || 0));
+    return { pool, due, fresh, newLeft, todayNew: fresh.slice(0, newLeft) };
+  }
+  function streakDays() {
+    let n = 0, d = dayNum();
+    if (!(store.days[dayKey(d)] || {}).n) d--;           // 오늘 아직 안 했으면 어제부터
+    while ((store.days[dayKey(d)] || {}).n) { n++; d--; }
+    return n;
+  }
+  function schedule(id, ok, conf) {
+    const t = dayNum();
+    const r = store.srs[id];
+    const s = r ? { ...r } : { lv: 0, due: t, lapses: 0 };
+    const early = r && r.due > t;
+    if (!ok) { s.lv = 1; s.lapses = (s.lapses || 0) + 1; s.hyper = conf === "sure"; }
+    else if (conf === "guess") { s.lv = 1; }
+    else if (early) { s.lv = Math.max(1, s.lv); }      // 예정보다 일찍 맞힘: 단계 유지
+    else { s.lv = Math.min(IV.length - 1, s.lv + (!r && conf === "sure" ? 2 : 1)); s.hyper = false; }
+    s.due = t + IV[s.lv];
+    s.last = Date.now();
+    s.conf = conf || "";
+    store.srs[id] = s;
+    return s;
+  }
+
   // ---------- 홈 ----------
   const opts = { category: loadCat(), exam: "", domain: "", freq: 0, count: 10, source: "smart" };
 
+  function weekBars() {
+    const t = dayNum(), out = [];
+    for (let d = t - 6; d <= t; d++) out.push({ d, n: (store.days[dayKey(d)] || {}).n || 0 });
+    const max = Math.max(5, ...out.map(x => x.n));
+    const wd = ["일", "월", "화", "수", "목", "금", "토"];
+    return `<div class="week">${out.map(x => `<div class="wk ${x.d === t ? "today" : ""}" title="${dayKey(x.d)} · ${x.n}문제">
+      <div class="wk-bar"><div style="height:${x.n / max * 100}%"></div></div>
+      <span>${wd[new Date(x.d * DAY).getUTCDay()]}</span></div>`).join("")}</div>`;
+  }
+
   function renderHome() {
-    const pool = inCat(opts.category);
-    const ids = pool.map(q => q.id);
+    const cat = opts.category;
+    const p = plan(cat, "");
+    const pool = p.pool;
     const exams = [...new Set(pool.map(q => q.exam).filter(Boolean))];
     const domains = [...new Set(pool.map(q => q.domain).filter(Boolean))].sort();
     const hasFreq = pool.some(q => q.freq);
-    const catWrong = ids.filter(id => store.wrong[id]).length;
-    const tried = ids.filter(id => store.stats[id]);
-    const totalTries = tried.reduce((n, id) => n + store.stats[id].tries, 0);
-    const totalCorrect = tried.reduce((n, id) => n + store.stats[id].correct, 0);
-    const acc = totalTries ? Math.round(totalCorrect / totalTries * 100) + "%" : "-";
+    const mem = [0, 0, 0, 0];
+    pool.forEach(q => mem[memLevel(store.srs[q.id])]++);
+    const hyper = pool.filter(q => store.srs[q.id] && store.srs[q.id].hyper);
+    const dueN = Math.min(p.due.length, SESSION_DUE_MAX);
+    const sessN = dueN + p.todayNew.length;
+    const t = dayNum();
+    const nextDue = pool.map(q => store.srs[q.id]).filter(r => r && r.due > t).map(r => r.due).sort((a, b) => a - b)[0];
+    const tomorrowN = pool.filter(q => store.srs[q.id] && store.srs[q.id].due === t + 1).length;
+    const streak = streakDays();
+    const catDesc = (CATS.find(c => c.id === cat) || {}).desc;
+    const set = store.settings;
 
     app.innerHTML = `
       <section class="card">
-        <h1>기출 반복 학습</h1>
-        <p class="muted">문제를 풀면 바로 정답과 이유를 알려주고, 틀린 문제는 오답노트에 자동 저장됩니다.
-        오답노트 문제는 ${CLEAR_STREAK}번 연속으로 맞히면 졸업합니다.</p>
         ${CATS.length > 1 ? `
         <div class="seg cat-seg" id="catSeg">
-          ${CATS.map(c => `<button data-c="${c.id}" class="${opts.category === c.id ? "on" : ""}"><span class="full">${esc(c.name)}</span><span class="short">${esc(c.short || c.name)}</span><small>${inCat(c.id).length}문제</small></button>`).join("")}
+          ${CATS.map(c => `<button data-c="${c.id}" class="${cat === c.id ? "on" : ""}"><span class="full">${esc(c.name)}</span><span class="short">${esc(c.short || c.name)}</span><small>${inCat(c.id).length}문제</small></button>`).join("")}
         </div>` : ""}
-        ${(CATS.find(c => c.id === opts.category) || {}).desc ? `<p class="muted cat-desc">${esc(CATS.find(c => c.id === opts.category).desc)}</p>` : ""}
-        <div class="stats">
-          <div class="stat"><b>${pool.length}</b><span>전체 문제</span></div>
-          <div class="stat"><b>${tried.length}</b><span>풀어본 문제</span></div>
-          <div class="stat"><b>${acc}</b><span>정답률</span></div>
-          <div class="stat"><b>${catWrong}</b><span>오답노트</span></div>
+        ${catDesc ? `<p class="muted cat-desc">${esc(catDesc)}</p>` : ""}
+      </section>
+
+      <section class="card today">
+        <div class="today-head">
+          <h1>오늘의 학습</h1>
+          <span class="streak ${streak ? "on" : ""}" title="연속 학습일">🔥 ${streak}일 연속</span>
         </div>
+        ${sessN ? `
+        <div class="today-nums">
+          <div><b>${dueN}</b><span>복습할 문제${p.due.length > dueN ? ` <small>(전체 ${p.due.length})</small>` : ""}</span></div>
+          <div><b>${p.todayNew.length}</b><span>새 문제</span></div>
+          <div><b>${Math.max(1, Math.round(sessN * 0.6))}분</b><span>예상 시간</span></div>
+        </div>
+        <button class="btn primary block big" id="todayBtn">오늘 학습 시작 · ${sessN}문제</button>
+        <p class="muted small" style="margin:8px 0 0">잊어 갈 때쯤 다시 꺼내야 오래 남습니다. 복습할 문제와 새 문제를 단원을 섞어서 냅니다.</p>` : `
+        <div class="done-box">
+          <div class="done-ic">✅</div>
+          <div><b>오늘 할 학습을 마쳤어요.</b>
+          <div class="muted small">${nextDue ? `다음 복습은 ${inDays(nextDue - t)}(${fmtDate(nextDue)})입니다. 자고 일어나서 다시 꺼내면 기억이 더 단단해져요.` : "모든 문제를 한 번씩 풀었어요."}</div></div>
+        </div>
+        <button class="btn block" id="extraBtn">더 풀기 · 새 문제 10개 추가</button>`}
+        ${weekBars()}
       </section>
 
       <section class="card">
-        <h2>문제 풀기 <span class="muted" style="font-weight:400;font-size:14px">· ${esc(catName(opts.category))}</span></h2>
-        ${exams.length > 1 ? `
-        <div class="field">
-          <label>${hasFreq ? "과목 선택" : "시험 선택"}</label>
-          <select id="examSel">
-            <option value="">${hasFreq ? "전체 과목" : "전체 시험"}</option>
-            ${exams.map(e => `<option value="${esc(e)}" ${opts.exam === e ? "selected" : ""}>${esc(e)} (${pool.filter(q => q.exam === e).length}문제)</option>`).join("")}
-          </select>
+        <h2>기억 상태 <span class="muted" style="font-weight:400;font-size:14px">· ${pool.length}문제</span></h2>
+        <div class="memstack">${mem.map((n, i) => n ? `<div class="m${i}" style="flex:${n}" title="${MEM[i]} ${n}"></div>` : "").join("")}</div>
+        <div class="memlegend">${mem.map((n, i) => `<span><i class="m${i}"></i>${MEM[i]} <b>${n}</b></span>`).join("")}</div>
+        <p class="muted small" style="margin:6px 0 0">학습 중 = 1~3일 간격 · 익숙해짐 = 1~2주 간격 · 장기 기억 = 한 달 이상 간격으로 맞힌 문제${tomorrowN ? ` · 내일 복습 예정 ${tomorrowN}문제` : ""}</p>
+        ${hyper.length ? `
+        <div class="hyper-box">
+          <div><b>🔥 착각 교정 ${hyper.length}문제</b>
+          <div class="muted small">확신했는데 틀린 문제입니다. 이런 오답은 바로잡으면 오히려 잘 기억됩니다.</div></div>
+          <button class="btn small" id="hyperBtn">지금 풀기</button>
         </div>` : ""}
-        ${domains.length > 1 ? `
-        <div class="field">
-          <label>영역 선택</label>
-          <select id="domainSel">
-            <option value="">전체 영역</option>
-            ${domains.map(d => `<option value="${esc(d)}" ${opts.domain === d ? "selected" : ""}>${esc(d)} (${pool.filter(q => q.domain === d).length}문제)</option>`).join("")}
-          </select>
-        </div>` : ""}
-        ${hasFreq ? `
-        <div class="field">
-          <label>출제 빈도</label>
-          <select id="freqSel">
-            ${[[0, "전체"], [2, "2회 이상 나온 문제"], [3, "★ 3회 이상 나온 문제"]].map(([v, t]) => `<option value="${v}" ${opts.freq === v ? "selected" : ""}>${t} (${pool.filter(q => (q.freq || 0) >= v).length}문제)</option>`).join("")}
-          </select>
-        </div>` : ""}
-        <div class="field">
-          <label>문제 수</label>
-          <div class="seg" id="countSeg">
-            ${[10, 50, 0].map(n => `<button data-n="${n}" class="${opts.count === n ? "on" : ""}">${n ? n + "문제" : "전체"}</button>`).join("")}
-          </div>
-        </div>
-        <div class="field">
-          <label>출제 방식</label>
-          <div class="seg" id="srcSeg">
-            ${[["smart", "안 푼 문제·오답 우선"], ["random", "완전 랜덤"], ["wrong", "오답노트만"]]
-              .map(([k, t]) => `<button data-s="${k}" class="${opts.source === k ? "on" : ""}">${t}</button>`).join("")}
-          </div>
-        </div>
-        <button class="btn primary block" id="startBtn">시작하기</button>
-        <p class="muted" id="startMsg" style="margin:8px 0 0"></p>
-      </section>`;
+      </section>
 
-    const sel = document.getElementById("examSel");
-    if (sel) sel.onchange = () => { opts.exam = sel.value; };
-    const dsel = document.getElementById("domainSel");
-    if (dsel) dsel.onchange = () => { opts.domain = dsel.value; };
-    const fsel = document.getElementById("freqSel");
-    if (fsel) fsel.onchange = () => { opts.freq = +fsel.value; };
+      <section class="card">
+        <details id="customBox" ${opts.open ? "open" : ""}>
+          <summary><h2 style="display:inline">직접 골라 풀기</h2> <span class="muted small">단원·문제 수·방식 선택</span></summary>
+          <div style="margin-top:14px">
+          ${exams.length > 1 ? `
+          <div class="field">
+            <label>${hasFreq ? "과목 선택" : "단원 선택"}</label>
+            <select id="examSel">
+              <option value="">${hasFreq ? "전체 과목" : "전체 단원"}</option>
+              ${exams.map(e => `<option value="${esc(e)}" ${opts.exam === e ? "selected" : ""}>${esc(e)} (${pool.filter(q => q.exam === e).length}문제)</option>`).join("")}
+            </select>
+          </div>` : ""}
+          ${domains.length > 1 ? `
+          <div class="field">
+            <label>영역 선택</label>
+            <select id="domainSel">
+              <option value="">전체 영역</option>
+              ${domains.map(d => `<option value="${esc(d)}" ${opts.domain === d ? "selected" : ""}>${esc(d)} (${pool.filter(q => q.domain === d).length}문제)</option>`).join("")}
+            </select>
+          </div>` : ""}
+          ${hasFreq ? `
+          <div class="field">
+            <label>출제 빈도</label>
+            <select id="freqSel">
+              ${[[0, "전체"], [2, "2회 이상 나온 문제"], [3, "★ 3회 이상 나온 문제"]].map(([v, tx]) => `<option value="${v}" ${opts.freq === v ? "selected" : ""}>${tx} (${pool.filter(q => (q.freq || 0) >= v).length}문제)</option>`).join("")}
+            </select>
+          </div>` : ""}
+          <div class="field">
+            <label>문제 수</label>
+            <div class="seg" id="countSeg">
+              ${[10, 20, 50, 0].map(n => `<button data-n="${n}" class="${opts.count === n ? "on" : ""}">${n ? n + "문제" : "전체"}</button>`).join("")}
+            </div>
+          </div>
+          <div class="field">
+            <label>출제 방식</label>
+            <div class="seg" id="srcSeg">
+              ${[["smart", "약한 문제 우선"], ["random", "무작위"], ["wrong", "오답노트만"]]
+                .map(([k, tx]) => `<button data-s="${k}" class="${opts.source === k ? "on" : ""}">${tx}</button>`).join("")}
+            </div>
+          </div>
+          <button class="btn primary block" id="startBtn">시작하기</button>
+          <p class="muted" id="startMsg" style="margin:8px 0 0"></p>
+          </div>
+        </details>
+      </section>
+
+      <section class="card">
+        <details>
+          <summary><h2 style="display:inline">학습 설정</h2></summary>
+          <div style="margin-top:12px">
+            <div class="field">
+              <label>하루 새 문제 수 (과목별)</label>
+              <div class="seg" id="newSeg">${[5, 10, 20, 30].map(n => `<button data-v="${n}" class="${set.newPerDay === n ? "on" : ""}">${n}개</button>`).join("")}</div>
+            </div>
+            <label class="toggle"><input type="checkbox" id="setConf" ${set.conf ? "checked" : ""}> 답을 고른 뒤 확신도 묻기 <span class="muted small">(확실·애매·찍음 → 복습 간격에 반영)</span></label>
+            <label class="toggle"><input type="checkbox" id="setRecall" ${set.recall ? "checked" : ""}> 먼저 떠올리기 <span class="muted small">(보기를 가린 채 답을 먼저 떠올린 뒤 보기 열기)</span></label>
+          </div>
+        </details>
+      </section>
+
+      <a class="card sci-link" href="#" data-go="science">
+        <span>🧠</span><div><b>이 사이트의 학습 원리</b><div class="muted small">인출 연습 · 간격 반복 · 교차 학습 · 확신도와 착각 교정 — 근거 논문 보기</div></div><span class="lab-go">›</span>
+      </a>`;
+
+    const $ = id => document.getElementById(id);
+    if ($("todayBtn")) $("todayBtn").onclick = () => startQuiz(interleave(p.due.slice(0, SESSION_DUE_MAX).concat(p.todayNew)), "오늘의 학습", "today");
+    if ($("extraBtn")) $("extraBtn").onclick = () => {
+      const extra = p.fresh.slice(0, 10);
+      const list = extra.length ? extra : pickQuestions({ ...opts, exam: "", domain: "", freq: 0, count: 10, source: "smart" });
+      startQuiz(interleave(list), "더 풀기", "today");
+    };
+    if ($("hyperBtn")) $("hyperBtn").onclick = () => startQuiz(shuffle(hyper), "착각 교정", "custom");
+    if ($("examSel")) $("examSel").onchange = e => { opts.exam = e.target.value; };
+    if ($("domainSel")) $("domainSel").onchange = e => { opts.domain = e.target.value; };
+    if ($("freqSel")) $("freqSel").onchange = e => { opts.freq = +e.target.value; };
+    $("customBox").ontoggle = e => { opts.open = e.target.open; };
     document.querySelectorAll("#catSeg button").forEach(b => b.onclick = () => {
       opts.category = b.dataset.c; opts.exam = ""; opts.domain = ""; opts.freq = 0;
       saveCat(opts.category); renderHome();
     });
     document.querySelectorAll("#countSeg button").forEach(b => b.onclick = () => { opts.count = +b.dataset.n; renderHome(); });
     document.querySelectorAll("#srcSeg button").forEach(b => b.onclick = () => { opts.source = b.dataset.s; renderHome(); });
-    document.getElementById("startBtn").onclick = () => {
+    document.querySelectorAll("#newSeg button").forEach(b => b.onclick = () => { store.settings.newPerDay = +b.dataset.v; save(); renderHome(); });
+    $("setConf").onchange = e => { store.settings.conf = e.target.checked; save(); };
+    $("setRecall").onchange = e => { store.settings.recall = e.target.checked; save(); };
+    $("startBtn").onclick = () => {
       const list = pickQuestions(opts);
       if (!list.length) {
-        document.getElementById("startMsg").textContent =
-          opts.source === "wrong" ? "오답노트가 비어 있어요. 먼저 문제를 풀어보세요!" : "문제를 불러오지 못했습니다. data 폴더의 문제 파일을 확인하세요.";
+        $("startMsg").textContent = opts.source === "wrong" ? "오답노트가 비어 있어요. 먼저 문제를 풀어보세요!" : "조건에 맞는 문제가 없습니다.";
         return;
       }
       const base = opts.domain || opts.exam || catName(opts.category);
-      startQuiz(list, opts.source === "wrong" ? "오답노트" : base + (opts.freq ? ` · ${opts.freq}회 이상` : ""));
+      startQuiz(opts.source === "random" ? list : interleave(list), opts.source === "wrong" ? "오답노트" : base + (opts.freq ? ` · ${opts.freq}회 이상` : ""), "custom");
     };
   }
 
@@ -163,15 +320,17 @@
     if (source === "wrong") pool = pool.filter(q => store.wrong[q.id]);
     let ordered;
     if (source === "smart") {
-      // 우선순위: 오답노트 > 안 푼 문제 > 정답률 낮은 문제 (같은 그룹 안에서는 랜덤)
+      // 약한 문제 우선: 착각 > 오답노트 > 복습 시기 지남 > 안 푼 문제 > 낮은 단계
+      const t = dayNum();
       const score = q => {
-        if (store.wrong[q.id]) return 0;
-        const s = store.stats[q.id];
-        if (!s) return 1;
-        return 2 + s.correct / s.tries;
+        const r = store.srs[q.id];
+        if (r && r.hyper) return 0;
+        if (store.wrong[q.id]) return 1;
+        if (r && r.due <= t) return 2;
+        if (!r) return 3;
+        return 4 + r.lv;
       };
       ordered = shuffle(pool).sort((a, b) => score(a) - score(b));
-      ordered = shuffle(count ? ordered.slice(0, count) : ordered);
     } else {
       ordered = shuffle(pool);
     }
@@ -181,41 +340,56 @@
   // ---------- 퀴즈 ----------
   let quiz = null;
 
-  function startQuiz(list, label) {
-    quiz = { list, label, i: 0, results: [], answered: false };
+  function startQuiz(list, label, mode) {
+    quiz = { list: list.slice(), re: list.map(() => false), label, mode: mode || "custom", i: 0, results: [], relearned: {}, answered: false };
     renderQuestion();
+    window.scrollTo(0, 0);
   }
 
   function renderQuestion() {
     const q = quiz.list[quiz.i];
+    const re = quiz.re[quiz.i];
     const total = quiz.list.length;
     quiz.answered = false;
     quiz.picked = new Set();
+    quiz.pending = null;
     const inNote = store.wrong[q.id];
+    const r = store.srs[q.id];
+    const recall = store.settings.recall && isMC(q) && !re;
+    const kind = re ? `<span class="tag re">🔁 다시 한 번</span>` : !r ? `<span class="tag new">새 문제</span>` : `<span class="tag">복습 · ${MEM[memLevel(r)]}</span>`;
 
     app.innerHTML = `
       <section class="card">
         <div class="qhead">
           <span>${esc(quiz.label)} · ${quiz.i + 1} / ${total}</span>
-          <span>${freqTag(q)}${q.no ? `<span class="tag">원본 ${q.no}번</span>` : ""}${inNote ? `<span class="tag bad">오답노트</span>` : ""}</span>
+          <span>${kind}${freqTag(q)}${q.no ? `<span class="tag">원본 ${q.no}번</span>` : ""}${inNote ? `<span class="tag bad">오답노트</span>` : ""}${r && r.hyper ? `<span class="tag hot">🔥 착각 교정</span>` : ""}</span>
         </div>
         <div class="progress"><div style="width:${quiz.i / total * 100}%"></div></div>
         ${(q.domain || q.exam) ? `<div class="muted" style="font-size:13px">${esc(q.domain || q.exam)}</div>` : ""}
         <div class="qtext">${esc(q.question)}</div>
-        ${q.image ? `<img class="qimg" src="${esc(q.image)}" alt="문제 이미지">` : ""}
+        ${q.image ? `<a href="${esc(q.image)}" target="_blank" rel="noopener" class="qimg-link"><img class="qimg" src="${esc(q.image)}" alt="문제 그림" loading="lazy"></a><div class="muted small qimg-hint">그림을 누르면 크게 볼 수 있어요.</div>` : ""}
+        ${recall ? `
+          <div class="recall-box" id="recallBox">
+            <div>💭 보기를 보기 전에 답을 먼저 떠올려 보세요.</div>
+            <button class="btn block" id="revealBtn">떠올렸어요 · 보기 열기 <span class="muted small">(Space)</span></button>
+          </div>` : ""}
         ${isMC(q) ? `
-          <div class="choices">
+          <div class="choices" id="choices" ${recall ? "hidden" : ""}>
             ${q.choices.map((c, k) => `<button class="choice" data-k="${k + 1}"><span class="num">${NUMS[k] || k + 1}</span><span>${esc(c)}</span></button>`).join("")}
           </div>
           ${isMulti(q) ? `
-          <button class="btn primary block" id="multiBtn" style="margin-top:12px" disabled>정답 ${q.answer.length}개를 고르세요 (0/${q.answer.length})</button>
-          <div class="kbd-hint">키보드: 숫자키로 선택/해제 · Enter로 제출 · 다시 Enter로 다음</div>` : `
-          <div class="kbd-hint">키보드: 숫자키로 선택 · Enter로 다음</div>`}` : `
+          <button class="btn primary block" id="multiBtn" style="margin-top:12px" disabled ${recall ? "hidden" : ""}>정답 ${q.answer.length}개를 고르세요 (0/${q.answer.length})</button>` : ""}` : `
           <div class="row">
             <input type="text" id="shortInput" placeholder="정답을 입력하세요" autocomplete="off" style="flex:3">
             <button class="btn primary" id="shortBtn" style="flex:1">확인</button>
+          </div>`}
+        <div id="confBox" class="conf" hidden>
+          <div class="conf-q">얼마나 확신하나요?</div>
+          <div class="conf-btns">
+            ${Object.entries(CONF).map(([k, tx], i) => `<button class="conf-${k}" data-c="${k}"><b>${i + 1}</b> ${tx}</button>`).join("")}
           </div>
-          <div class="kbd-hint">Enter로 제출 · 다시 Enter로 다음</div>`}
+        </div>
+        <div class="kbd-hint" id="kbdHint">${kbdHint(q)}</div>
         <div id="fb"></div>
       </section>
       <div class="row">
@@ -224,21 +398,39 @@
 
     if (isMulti(q)) {
       app.querySelectorAll(".choice").forEach(b => b.onclick = () => togglePick(+b.dataset.k));
-      document.getElementById("multiBtn").onclick = () => submit([...quiz.picked]);
+      document.getElementById("multiBtn").onclick = () => choose([...quiz.picked]);
     } else if (isMC(q)) {
-      app.querySelectorAll(".choice").forEach(b => b.onclick = () => submit(+b.dataset.k));
+      app.querySelectorAll(".choice").forEach(b => b.onclick = () => choose(+b.dataset.k));
     } else {
       const inp = document.getElementById("shortInput");
       inp.focus();
-      document.getElementById("shortBtn").onclick = () => submit(inp.value);
+      document.getElementById("shortBtn").onclick = () => choose(inp.value);
     }
+    const rv = document.getElementById("revealBtn");
+    if (rv) rv.onclick = reveal;
+    app.querySelectorAll("#confBox button").forEach(b => b.onclick = () => finalize(quiz.pending, b.dataset.c));
     document.getElementById("quitBtn").onclick = () => {
       if (quiz.results.length) renderResult(); else go("home");
     };
   }
 
+  function kbdHint(q) {
+    const conf = store.settings.conf;
+    if (!isMC(q)) return `Enter로 제출${conf ? " · 1~3 확신도" : ""} · 다시 Enter로 다음`;
+    return `키보드: 숫자키로 ${isMulti(q) ? "선택/해제 · Enter로 제출" : "선택"}${conf ? " · 이어서 1~3으로 확신도" : ""} · Enter로 다음`;
+  }
+
+  function reveal() {
+    const box = document.getElementById("recallBox");
+    if (!box) return;
+    box.remove();
+    document.getElementById("choices").hidden = false;
+    const mb = document.getElementById("multiBtn");
+    if (mb) mb.hidden = false;
+  }
+
   function togglePick(k) {
-    if (quiz.answered) return;
+    if (quiz.answered || quiz.pending != null) return;
     const q = quiz.list[quiz.i];
     const need = q.answer.length;
     if (quiz.picked.has(k)) quiz.picked.delete(k);
@@ -249,14 +441,29 @@
     btn.textContent = quiz.picked.size === need ? "정답 확인" : `정답 ${need}개를 고르세요 (${quiz.picked.size}/${need})`;
   }
 
-  function submit(given) {
+  // 답 고르기 → (확신도 묻기) → 채점
+  function choose(given) {
     if (quiz.answered) return;
     const q = quiz.list[quiz.i];
+    if (isMulti(q) && (!Array.isArray(given) || given.length !== q.answer.length)) return;
+    if (!isMC(q) && !String(given).trim()) return;
+    if (!store.settings.conf || quiz.re[quiz.i]) return finalize(given, null);
+    quiz.pending = given;
+    if (isMC(q) && !isMulti(q)) app.querySelectorAll(".choice").forEach(b => b.classList.toggle("picked", +b.dataset.k === +given));
+    const mb = document.getElementById("multiBtn"); if (mb) mb.disabled = true;
+    const box = document.getElementById("confBox");
+    box.hidden = false;
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function finalize(given, conf) {
+    if (quiz.answered || given == null) return;
+    const q = quiz.list[quiz.i];
+    const re = quiz.re[quiz.i];
     let ok;
     if (isMC(q)) {
       const correct = mcAnswers(q);
       const chosen = (Array.isArray(given) ? given : [given]).map(Number).sort((a, b) => a - b);
-      if (isMulti(q) && chosen.length !== correct.length) return;
       ok = chosen.length === correct.length && correct.every(k => chosen.includes(k));
       given = isMulti(q) ? chosen : chosen[0];
       app.querySelectorAll(".choice").forEach(b => {
@@ -269,71 +476,108 @@
       const mb = document.getElementById("multiBtn");
       if (mb) mb.remove();
     } else {
-      if (!String(given).trim()) return;
       ok = shortAnswers(q).some(a => norm(a) === norm(given));
-      const inp = document.getElementById("shortInput");
-      inp.disabled = true;
+      document.getElementById("shortInput").disabled = true;
       document.getElementById("shortBtn").disabled = true;
     }
+    document.getElementById("confBox").hidden = true;
+    document.getElementById("kbdHint").textContent = "Enter로 다음";
     quiz.answered = true;
-    record(q, ok, given);
+    const res = record(q, ok, given, conf, re);
 
+    // 틀렸거나 찍어서 맞힌 문제는 같은 회차 안에서 몇 문제 뒤 한 번 더(연속 재학습)
+    let reMsg = "";
+    if ((!ok || conf === "guess") && (quiz.relearned[q.id] || 0) < 2) {
+      quiz.relearned[q.id] = (quiz.relearned[q.id] || 0) + 1;
+      const at = Math.min(quiz.i + 1 + RELEARN_GAP, quiz.list.length);
+      quiz.list.splice(at, 0, q); quiz.re.splice(at, 0, true);
+      reMsg = "🔁 이 문제는 몇 문제 뒤에 한 번 더 나옵니다.";
+    }
+
+    const msgs = [];
+    if (!re && conf === "sure" && !ok) msgs.push(`<div class="fb-note hyper"><b>🔥 착각 발견</b> — 확신했던 오답은 피드백을 받으면 오히려 잘 고쳐집니다. 해설을 읽고 <b>왜 그렇게 생각했는지</b> 한 줄로 짚어 보세요.</div>`);
+    if (!re && conf === "guess" && ok) msgs.push(`<div class="fb-note">🎲 맞혔지만 찍었어요. 아직 아는 것이 아니라서 내일 다시 나옵니다.</div>`);
+    if (reMsg) msgs.push(`<div class="fb-note">${reMsg}</div>`);
+    if (!re && res.srs) msgs.push(`<div class="muted small">📅 다음 복습: ${inDays(res.srs.due - dayNum())} (${fmtDate(res.srs.due)}) · ${MEM[memLevel(res.srs)]}</div>`);
+    if (re && ok) msgs.push(`<div class="muted small">👍 다시 꺼내는 데 성공했어요. 복습 일정은 처음 답 기준으로 유지됩니다.</div>`);
     const note = store.wrong[q.id];
-    let noteMsg = "";
-    if (!ok) noteMsg = "📒 오답노트에 저장했어요.";
-    else if (note) noteMsg = `📒 오답노트 연속 정답 ${note.streak}/${CLEAR_STREAK}`;
-    else if (quiz.results[quiz.results.length - 1].graduated) noteMsg = "🎉 오답노트에서 졸업했어요!";
+    if (!re && !ok) msgs.push(`<div class="muted small">📒 오답노트에 저장했어요.</div>`);
+    else if (!re && note) msgs.push(`<div class="muted small">📒 오답노트: 서로 다른 날 연속 정답 ${note.streak || 0}/${CLEAR_STREAK}</div>`);
+    else if (res.graduated) msgs.push(`<div class="muted small">🎉 오답노트에서 졸업했어요!</div>`);
 
     const last = quiz.i === quiz.list.length - 1;
     document.getElementById("fb").innerHTML = `
       <div class="feedback ${ok ? "good" : "bad"}">
-        <div class="title">${ok ? "⭕ 정답입니다!" : "❌ 틀렸습니다"}</div>
+        <div class="title">${ok ? "⭕ 정답입니다!" : "❌ 틀렸습니다"}${conf ? ` <span class="muted small">· ${CONF[conf]}</span>` : ""}</div>
         <div class="answer-line">정답: <b>${esc(answerText(q))}</b>${!ok ? ` <span class="muted">(내 답: ${esc(givenText(q, given))})</span>` : ""}</div>
         ${q.explanation ? `<div class="why"><b>💡 이유</b>\n${esc(q.explanation)}</div>` : ""}
         ${q.seen && q.seen.length ? `<div class="muted seen">🗓 출제: ${esc(q.seen.join(", "))}</div>` : ""}
-        ${noteMsg ? `<div class="muted" style="margin-top:8px">${noteMsg}</div>` : ""}
+        <div class="fb-msgs">${msgs.join("")}</div>
       </div>
       <button class="btn primary block" id="nextBtn" style="margin-top:12px">${last ? "결과 보기" : "다음 문제 →"}</button>`;
     document.getElementById("nextBtn").onclick = next;
-    document.getElementById("nextBtn").focus();
+    document.getElementById("nextBtn").focus({ preventScroll: true });
   }
 
-  function record(q, ok, given) {
-    const s = store.stats[q.id] || (store.stats[q.id] = { tries: 0, correct: 0 });
-    s.tries++; if (ok) s.correct++;
-    s.last = Date.now();
-    let graduated = false;
-    if (!ok) {
-      const w = store.wrong[q.id] || (store.wrong[q.id] = { count: 0, memo: "", added: Date.now() });
-      w.count++; w.streak = 0; w.lastWrong = Date.now(); w.lastGiven = given;
-    } else if (store.wrong[q.id]) {
-      const w = store.wrong[q.id];
-      w.streak = (w.streak || 0) + 1;
-      if (w.streak >= CLEAR_STREAK) { delete store.wrong[q.id]; graduated = true; }
+  function record(q, ok, given, conf, re) {
+    let graduated = false, srs = null;
+    if (!re) {
+      const s = store.stats[q.id] || (store.stats[q.id] = { tries: 0, correct: 0 });
+      s.tries++; if (ok) s.correct++;
+      s.last = Date.now();
+      const log = todayLog();
+      log.n++; if (ok) log.ok++;
+      if (!store.srs[q.id]) log.newBy[catOf(q)] = (log.newBy[catOf(q)] || 0) + 1;
+      srs = schedule(q.id, ok, conf);
+      const today = dayNum();
+      if (!ok) {
+        const w = store.wrong[q.id] || (store.wrong[q.id] = { count: 0, memo: "", added: Date.now() });
+        w.count++; w.streak = 0; w.okDay = null; w.lastWrong = Date.now(); w.lastGiven = given;
+      } else if (store.wrong[q.id] && conf !== "guess") {
+        const w = store.wrong[q.id];
+        if (w.okDay !== today && dayNum(w.lastWrong || 0) !== today) { w.streak = (w.streak || 0) + 1; w.okDay = today; }
+        if (w.streak >= CLEAR_STREAK) { delete store.wrong[q.id]; graduated = true; }
+      }
     }
-    quiz.results.push({ id: q.id, ok, given, graduated });
+    quiz.results.push({ id: q.id, ok, given, conf, re, graduated });
     save();
+    return { graduated, srs };
   }
 
   function next() {
-    if (quiz.i < quiz.list.length - 1) { quiz.i++; renderQuestion(); }
+    if (quiz.i < quiz.list.length - 1) { quiz.i++; renderQuestion(); window.scrollTo(0, 0); }
     else renderResult();
   }
 
   // ---------- 결과 ----------
   function renderResult() {
-    const r = quiz.results;
+    const all = quiz.results;
+    const r = all.filter(x => !x.re);
     const correct = r.filter(x => x.ok).length;
     const wrongs = r.filter(x => !x.ok);
+    const hyperN = r.filter(x => !x.ok && x.conf === "sure").length;
+    const guessN = r.filter(x => x.ok && x.conf === "guess").length;
+    const reOk = all.filter(x => x.re && x.ok).length, reN = all.filter(x => x.re).length;
     const pct = r.length ? Math.round(correct / r.length * 100) : 0;
+    const t = dayNum();
+    const cat = r.length ? catOf(BY_ID[r[0].id]) : opts.category;
+    const tomorrow = inCat(cat).filter(q => store.srs[q.id] && store.srs[q.id].due === t + 1).length;
+    const leftToday = plan(cat, "");
+    const left = Math.min(leftToday.due.length, SESSION_DUE_MAX) + leftToday.todayNew.length;
     app.innerHTML = `
       <section class="card">
         <h2>${esc(quiz.label)} 결과</h2>
         <div class="score">${correct} / ${r.length}</div>
-        <p class="muted" style="text-align:center">정답률 ${pct}% ${pct === 100 ? "· 완벽해요! 🎉" : ""}</p>
+        <p class="muted" style="text-align:center">처음 답 기준 정답률 ${pct}%${reN ? ` · 다시 꺼내기 ${reOk}/${reN} 성공` : ""}</p>
+        <div class="result-notes">
+          ${hyperN ? `<div>🔥 확신했는데 틀린 문제 <b>${hyperN}</b> — 착각 교정 목록에 올렸어요.</div>` : ""}
+          ${guessN ? `<div>🎲 찍어서 맞힌 문제 <b>${guessN}</b> — 내일 다시 나옵니다.</div>` : ""}
+          <div>📅 내일 복습 예정 <b>${tomorrow}</b>문제${left ? ` · 오늘 남은 학습 ${left}문제` : ""}</div>
+          <div class="muted small">💤 공부한 날 밤 잠을 자는 동안 기억이 정리·강화됩니다. 내일 다시 꺼내 보면 훨씬 오래 남아요.</div>
+        </div>
         <div class="row">
-          ${wrongs.length ? `<button class="btn primary" id="retryWrong">틀린 ${wrongs.length}문제 다시 풀기</button>` : ""}
-          <button class="btn" id="retryAll">같은 문제 다시 풀기</button>
+          ${left ? `<button class="btn primary" id="contBtn">오늘 학습 이어서 (${left})</button>` : ""}
+          ${wrongs.length ? `<button class="btn" id="retryWrong">틀린 ${wrongs.length}문제 다시 풀기</button>` : ""}
           <button class="btn" data-go="home">홈으로</button>
         </div>
       </section>
@@ -342,27 +586,33 @@
         <h2>이번에 틀린 문제</h2>
         ${wrongs.map(x => noteItemHTML(BY_ID[x.id], x.given, false)).join("")}
       </section>` : ""}`;
+    const cb = document.getElementById("contBtn");
+    if (cb) cb.onclick = () => startQuiz(interleave(leftToday.due.slice(0, SESSION_DUE_MAX).concat(leftToday.todayNew)), "오늘의 학습", "today");
     const rw = document.getElementById("retryWrong");
-    if (rw) rw.onclick = () => startQuiz(shuffle(wrongs.map(x => BY_ID[x.id])), "틀린 문제 다시");
-    document.getElementById("retryAll").onclick = () => startQuiz(shuffle(quiz.list), quiz.label);
+    if (rw) rw.onclick = () => startQuiz(shuffle(wrongs.map(x => BY_ID[x.id])), "틀린 문제 다시", "custom");
+    window.scrollTo(0, 0);
   }
 
   function noteItemHTML(q, given, editable) {
     const w = store.wrong[q.id];
+    const s = store.srs[q.id];
     const gt = givenText(q, given);
     return `
       <div class="list-item" data-id="${esc(q.id)}">
-        <div>${CATS.length > 1 ? `<span class="tag">${esc((CATS.find(c => c.id === catOf(q)) || {}).short || catOf(q))}</span>` : ""}${q.no ? `<span class="tag">원본 ${q.no}번</span>` : ""}${freqTag(q)}${(q.domain || q.exam) ? `<span class="tag">${esc(q.domain || q.exam)}</span>` : ""}${w ? `<span class="tag bad">${w.count}회 틀림</span>` : ""}</div>
+        <div>${CATS.length > 1 ? `<span class="tag">${esc((CATS.find(c => c.id === catOf(q)) || {}).short || catOf(q))}</span>` : ""}${q.no ? `<span class="tag">원본 ${q.no}번</span>` : ""}${freqTag(q)}${(q.domain || q.exam) ? `<span class="tag">${esc(q.domain || q.exam)}</span>` : ""}${w ? `<span class="tag bad">${w.count}회 틀림</span>` : ""}${s && s.hyper ? `<span class="tag hot">🔥 착각</span>` : ""}</div>
         <div style="font-weight:600;margin-top:4px;white-space:pre-wrap">${esc(q.question)}</div>
+        ${q.image ? `<img class="qimg small-img" src="${esc(q.image)}" alt="문제 그림" loading="lazy">` : ""}
         ${isMC(q) ? `<div class="muted">${q.choices.map((c, k) => `${NUMS[k] || k + 1} ${esc(c)}`).join("<br>")}</div>` : ""}
         ${gt ? `<div class="answer-line muted">내 답: ${esc(gt)}</div>` : ""}
-        <div class="answer-line">정답: <b>${esc(answerText(q))}</b></div>
-        ${q.explanation ? `<div class="muted" style="margin-top:4px;white-space:pre-wrap">💡 ${esc(q.explanation)}</div>` : ""}
+        <details class="note-ans"><summary>정답과 해설 보기 <span class="muted small">(먼저 떠올려 보세요)</span></summary>
+          <div class="answer-line">정답: <b>${esc(answerText(q))}</b></div>
+          ${q.explanation ? `<div class="muted" style="margin-top:4px;white-space:pre-wrap">💡 ${esc(q.explanation)}</div>` : ""}
+        </details>
         ${editable ? `
           <div class="field" style="margin:10px 0 6px">
-            <textarea class="memo" placeholder="나만의 메모 (자동 저장)">${esc(w.memo || "")}</textarea>
+            <textarea class="memo" placeholder="왜 틀렸는지 한 줄로 적어 보세요 (자동 저장)">${esc(w.memo || "")}</textarea>
           </div>
-          <div class="muted" style="font-size:13px">연속 정답 ${w.streak || 0}/${CLEAR_STREAK} ·
+          <div class="muted" style="font-size:13px">서로 다른 날 연속 정답 ${w.streak || 0}/${CLEAR_STREAK}${s ? ` · 다음 복습 ${inDays(s.due - dayNum())}` : ""} ·
             <button class="btn small danger del">오답노트에서 삭제</button></div>` : ""}
       </div>`;
   }
@@ -372,14 +622,16 @@
   function renderNotes() {
     const allIds = wrongIds();
     if (notesCat && !CATS.some(c => c.id === notesCat)) notesCat = "";
-    const ids = allIds.filter(id => !notesCat || catOf(BY_ID[id]) === notesCat).sort((a, b) => (store.wrong[b].count - store.wrong[a].count) || (store.wrong[b].lastWrong || 0) - (store.wrong[a].lastWrong || 0));
+    const ids = allIds.filter(id => !notesCat || catOf(BY_ID[id]) === notesCat).sort((a, b) => (!!(store.srs[b] || {}).hyper - !!(store.srs[a] || {}).hyper) || (store.wrong[b].count - store.wrong[a].count) || (store.wrong[b].lastWrong || 0) - (store.wrong[a].lastWrong || 0));
     app.innerHTML = `
       <section class="card">
         <h1>오답노트</h1>
-        <p class="muted">틀린 문제가 자동으로 모입니다. 많이 틀린 순서로 정렬돼요. ${CLEAR_STREAK}번 연속 맞히면 자동으로 빠집니다.</p>
+        <p class="muted">틀린 문제가 자동으로 모입니다. 착각한 문제와 많이 틀린 문제가 위에 옵니다.
+        같은 날 여러 번 맞히는 것은 기억이 아니라 단기 기억이라, <b>서로 다른 날 ${CLEAR_STREAK}번 연속</b> 맞혀야 졸업합니다.
+        정답은 가려져 있으니 먼저 떠올린 뒤 펼쳐 보세요.</p>
         ${CATS.length > 1 ? `
         <div class="seg" id="noteCatSeg" style="margin-bottom:12px">
-          ${[["", "전체"], ...CATS.map(c => [c.id, c.short || c.name])].map(([id, t]) => `<button data-c="${id}" class="${notesCat === id ? "on" : ""}">${esc(t)} (${allIds.filter(x => !id || catOf(BY_ID[x]) === id).length})</button>`).join("")}
+          ${[["", "전체"], ...CATS.map(c => [c.id, c.short || c.name])].map(([id, tx]) => `<button data-c="${id}" class="${notesCat === id ? "on" : ""}">${esc(tx)} (${allIds.filter(x => !id || catOf(BY_ID[x]) === id).length})</button>`).join("")}
         </div>` : ""}
         ${ids.length ? `
         <div class="row">
@@ -393,7 +645,7 @@
       </section>
       <section class="card">
         <h2>학습 기록 관리</h2>
-        <p class="muted">기록은 이 브라우저에만 저장됩니다. 다른 기기로 옮기려면 백업 파일을 사용하세요.</p>
+        <p class="muted">기록(풀이·복습 일정·오답노트·외운 용어)은 이 브라우저에만 저장됩니다. 다른 기기로 옮기려면 백업 파일을 사용하세요.</p>
         <div class="row">
           <button class="btn small" id="exportBtn">백업 내보내기</button>
           <label class="btn small" style="text-align:center">백업 불러오기<input type="file" id="importInp" accept=".json" hidden></label>
@@ -405,7 +657,7 @@
     app.querySelectorAll("[data-n]").forEach(b => b.onclick = () => {
       const n = +b.dataset.n;
       const list = shuffle(ids.map(id => BY_ID[id]));
-      startQuiz(n ? list.slice(0, n) : list, "오답노트");
+      startQuiz(n ? list.slice(0, n) : list, "오답노트", "custom");
     });
     app.querySelectorAll(".list-item").forEach(el => {
       const id = el.dataset.id;
@@ -425,13 +677,14 @@
     document.getElementById("importInp").onchange = e => {
       const f = e.target.files[0]; if (!f) return;
       f.text().then(t => {
-        const d = JSON.parse(t);
-        store = { stats: d.stats || {}, wrong: d.wrong || {}, known: d.known || {}, custom: d.custom || [] };
+        store = normalize(JSON.parse(t));
         save(); renderNotes(); alert("불러왔습니다.");
       }).catch(() => alert("올바른 백업 파일이 아닙니다."));
     };
     document.getElementById("resetBtn").onclick = () => {
-      if (confirm("모든 풀이 기록, 오답노트, 외운 용어 체크를 삭제할까요? (내 단어는 유지됩니다) 되돌릴 수 없습니다.")) { store = { stats: {}, wrong: {}, known: {}, custom: store.custom || [] }; save(); renderNotes(); }
+      if (confirm("모든 풀이 기록, 복습 일정, 오답노트, 외운 용어 체크를 삭제할까요? (내 단어와 설정은 유지됩니다) 되돌릴 수 없습니다.")) {
+        store = { ...blank(), custom: store.custom || [], settings: store.settings }; save(); renderNotes();
+      }
     };
   }
 
@@ -439,7 +692,7 @@
   const GLOSSARY_BASE = window.GLOSSARY || [];
   const MY_CAT = "내 단어";
   const PAGE_SIZE = 20;
-  const gopts = { q: "", cat: "", known: "all", hide: false, page: 1 };
+  const gopts = { q: "", cat: "", known: "all", hide: true, page: 1 };
   const QTEXT = BANK.map(q => (q.question + " " + (q.choices || []).join(" ")).toLowerCase());
   const relCache = new Map();
 
@@ -773,33 +1026,123 @@
       <p class="muted small">실제 장비·OS 동작을 단순화한 연습용이라 화면 문구와 명령 출력이 실제와 조금 다를 수 있습니다.</p>`;
   }
 
+  // ---------- 학습 원리 ----------
+  const scholar = q => `https://scholar.google.com/scholar?q=${encodeURIComponent(q)}`;
+  const SCIENCE = [
+    { ic: "🧠", t: "인출 연습 — 다시 읽기보다 꺼내 보기",
+      what: "같은 시간을 써도 내용을 다시 읽는 것보다 시험처럼 기억에서 꺼내 보는 쪽이 며칠~일주일 뒤 기억이 훨씬 좋습니다(시험 효과). 뇌 영상(fMRI) 연구에서는 인출 연습이 해마를 포함한 기억 관련 영역의 활동과 연결되어 나중의 기억을 강화하는 것으로 보고됩니다.",
+      how: "모든 학습을 문제 풀이로 합니다. 오답노트와 용어 표도 정답·뜻을 가려 두고 먼저 떠올린 뒤 펼치게 했습니다.",
+      refs: [
+        ["Roediger & Karpicke (2006). Test-enhanced learning. Psychological Science, 17(3).", scholar("Roediger Karpicke 2006 Test-enhanced learning")],
+        ["Karpicke & Roediger (2008). The critical importance of retrieval for learning. Science, 319.", scholar("Karpicke Roediger 2008 critical importance of retrieval for learning")],
+        ["Wing, Marsh & Cabeza (2013). Neural correlates of retrieval-based memory enhancement: An fMRI study of the testing effect. Neuropsychologia, 51(12).", "https://doi.org/10.1016/j.neuropsychologia.2013.04.004"],
+        ["van den Broek et al. (2016). Neurocognitive mechanisms of the \"testing effect\": A review. Trends in Neuroscience and Education, 5(2).", "https://doi.org/10.1016/j.tine.2016.05.001"]
+      ] },
+    { ic: "📅", t: "간격 반복 — 잊어 갈 때쯤 다시",
+      what: "한 번에 몰아서 보는 것보다 시간 간격을 두고 나눠 복습할 때 오래 남습니다(간격 효과). 최적 간격은 '얼마나 오래 기억해야 하는가'에 비례해 늘어나며, 몇 주 뒤 시험이라면 그 기간의 약 20%, 1년 뒤라면 약 5% 간격이 가장 효과적이었습니다.",
+      how: "맞힐 때마다 다음 복습을 1 → 3 → 7 → 16 → 35 → 80일 뒤로 늘리고, 틀리면 다음 날부터 다시 시작합니다. 예정보다 일찍 맞힌 것은 단계를 올리지 않습니다. 홈의 '오늘의 학습'이 그날 복습할 문제를 모아 줍니다.",
+      refs: [
+        ["Cepeda, Pashler, Vul, Wixted & Rohrer (2006). Distributed practice in verbal recall tasks: A review and quantitative synthesis. Psychological Bulletin, 132(3).", scholar("Cepeda 2006 Distributed practice in verbal recall tasks review quantitative synthesis")],
+        ["Cepeda, Vul, Rohrer, Wixted & Pashler (2008). Spacing effects in learning: A temporal ridgeline of optimal retention. Psychological Science, 19(11).", "https://doi.org/10.1111/j.1467-9280.2008.02209.x"]
+      ] },
+    { ic: "🔁", t: "연속 재학습 — 맞힐 때까지 한 번, 그리고 다른 날 또",
+      what: "한 회차 안에서 틀린 문제를 정답을 낼 때까지 다시 인출하고, 그런 회차를 며칠에 걸쳐 반복하면 장기 기억이 크게 좋아집니다.",
+      how: "틀리거나 찍어서 맞힌 문제는 같은 회차 안에서 몇 문제 뒤에 한 번 더 나옵니다. 오답노트는 같은 날이 아닌 '서로 다른 날' 두 번 연속 맞혀야 졸업합니다.",
+      refs: [["Rawson & Dunlosky (2011). Optimizing schedules of retrieval practice for durable and efficient learning. Journal of Experimental Psychology: General, 140(3).", scholar("Rawson Dunlosky 2011 Optimizing schedules of retrieval practice durable efficient learning")]] },
+    { ic: "🔀", t: "교차 학습 — 단원을 섞어서",
+      what: "한 단원을 몰아서 풀 때보다 여러 단원을 섞어 풀면 그 자리에서는 더 어렵게 느껴지지만, 나중에 문제 유형을 구별하고 적용하는 능력이 좋아집니다(바람직한 어려움).",
+      how: "오늘의 학습과 직접 골라 풀기(약한 문제 우선)는 같은 단원이 연달아 몰리지 않게 섞어서 냅니다.",
+      refs: [
+        ["Kornell & Bjork (2008). Learning concepts and categories: Is spacing the \"enemy of induction\"? Psychological Science, 19(6).", scholar("Kornell Bjork 2008 Learning concepts and categories spacing enemy of induction")],
+        ["Rohrer & Taylor (2007). The shuffling of mathematics problems improves learning. Instructional Science, 35.", scholar("Rohrer Taylor 2007 shuffling of mathematics problems improves learning")],
+        ["Bjork (1994). Memory and metamemory considerations in the training of human beings. In Metacognition: Knowing about knowing.", scholar("Bjork 1994 Memory and metamemory considerations in the training of human beings")]
+      ] },
+    { ic: "🎯", t: "확신도와 착각 교정",
+      what: "확신했는데 틀린 답은 피드백을 받으면 오히려 확신이 낮았던 오답보다 더 잘 고쳐집니다(과잉교정 효과). fMRI 연구에서는 확신과 정답이 어긋날 때 전대상피질·내측 전두이랑이 활동하고, 확신 오답에서는 우측 측두두정접합부·배외측 전전두엽 활동이 더해져 주의와 수정이 일어나는 것으로 보고됐습니다. 반대로 찍어서 맞힌 것은 아직 아는 것이 아닙니다.",
+      how: "답을 고른 뒤 '확실·애매·찍음'을 고릅니다. 확신 오답은 🔥 착각 교정 목록으로 먼저 복습하고, 찍어서 맞힌 문제는 다음 날 다시 냅니다. 처음 보는 문제를 확신하고 맞히면 간격을 한 단계 더 늘립니다.",
+      refs: [
+        ["Butterfield & Metcalfe (2001). Errors committed with high confidence are hypercorrected. Journal of Experimental Psychology: Learning, Memory, and Cognition, 27(6).", scholar("Butterfield Metcalfe 2001 Errors committed with high confidence are hypercorrected")],
+        ["Metcalfe, Butterfield, Habeck & Stern (2012). Neural correlates of people's hypercorrection of their false beliefs. Journal of Cognitive Neuroscience, 24, 1571–1583.", scholar("Metcalfe Butterfield Habeck Stern 2012 Neural correlates of people's hypercorrection of their false beliefs")]
+      ] },
+    { ic: "💭", t: "먼저 떠올리기 — 틀려도 시도가 남는다",
+      what: "정답을 보기 전에 스스로 답을 만들어 보는 시도는, 틀리더라도 뒤이은 학습을 더 잘 남게 합니다(사전 인출 효과).",
+      how: "설정에서 '먼저 떠올리기'를 켜면 보기를 가린 채 문제만 보여 주고, 답을 떠올린 뒤 보기를 엽니다. 처음 보는 문제도 바로 해설을 읽지 않고 먼저 풀게 합니다.",
+      refs: [
+        ["Kornell, Hays & Bjork (2009). Unsuccessful retrieval attempts enhance subsequent learning. Journal of Experimental Psychology: Learning, Memory, and Cognition, 35(4).", scholar("Kornell Hays Bjork 2009 Unsuccessful retrieval attempts enhance subsequent learning")],
+        ["Richland, Kornell & Kao (2009). The pretesting effect: Do unsuccessful retrieval attempts enhance learning? Journal of Experimental Psychology: Applied, 15(3).", scholar("Richland Kornell Kao 2009 pretesting effect")]
+      ] },
+    { ic: "💤", t: "수면과 기억 공고화",
+      what: "학습 뒤 잠을 자는 동안 해마에 임시로 저장된 기억이 다시 재생되며 대뇌 피질의 장기 기억으로 옮겨지고 강화됩니다.",
+      how: "하루 학습량을 '오늘의 학습'으로 나누고, 결과 화면에서 다음 날 복습을 안내합니다. 밤새 몰아 하기보다 매일 조금씩, 자고 나서 다시 꺼내는 흐름을 권합니다.",
+      refs: [["Diekelmann & Born (2010). The memory function of sleep. Nature Reviews Neuroscience, 11(2).", scholar("Diekelmann Born 2010 The memory function of sleep")]] },
+    { ic: "📚", t: "종합 — 효과가 큰 공부법과 작은 공부법",
+      what: "학습 기법 10가지를 검토한 종합 연구에서 '연습 시험(인출 연습)'과 '분산 연습(간격 반복)'이 가장 효용이 높게, 다시 읽기·밑줄 긋기·요약은 낮게 평가됐습니다.",
+      how: "이 사이트의 기본 흐름을 '문제로 꺼내기 + 간격 두고 반복'으로 짰습니다. 해설은 읽기 자료가 아니라 피드백으로 씁니다.",
+      refs: [["Dunlosky, Rawson, Marsh, Nathan & Willingham (2013). Improving students' learning with effective learning techniques. Psychological Science in the Public Interest, 14(1).", scholar("Dunlosky 2013 Improving students' learning with effective learning techniques")]] }
+  ];
+
+  function renderScience() {
+    app.innerHTML = `
+      <section class="card">
+        <h1>이 사이트의 학습 원리</h1>
+        <p class="muted">기억과 학습에 관한 인지심리학·뇌과학 연구에서 효과가 반복해서 확인된 원리를 바탕으로 학습 흐름을 짰습니다.
+        각 항목에 '연구 내용'과 '사이트에 적용한 방법', 근거 논문을 정리했습니다.</p>
+        <div class="sci-flow">
+          <span>오늘의 학습</span><i>→</i><span>먼저 떠올리기</span><i>→</i><span>답 + 확신도</span><i>→</i><span>즉시 피드백</span><i>→</i><span>틀리면 몇 문제 뒤 다시</span><i>→</i><span>간격 두고 복습</span>
+        </div>
+      </section>
+      ${SCIENCE.map(s => `
+      <section class="card sci">
+        <h2>${s.ic} ${esc(s.t)}</h2>
+        <div class="sci-row"><b>연구 내용</b><p>${esc(s.what)}</p></div>
+        <div class="sci-row"><b>사이트 적용</b><p>${esc(s.how)}</p></div>
+        <details class="sci-refs"><summary>근거 논문 ${s.refs.length}편</summary>
+          <ul>${s.refs.map(([c, u]) => `<li><a href="${esc(u)}" target="_blank" rel="noopener">${esc(c)}</a></li>`).join("")}</ul>
+        </details>
+      </section>`).join("")}
+      <section class="card">
+        <p class="muted small" style="margin:0">참고: 위 효과는 실험실과 교실 연구에서 평균적으로 확인된 것으로, 사람과 과목에 따라 크기가 다를 수 있습니다.
+        논문 링크는 DOI 또는 Google Scholar 검색으로 연결됩니다. 복습 간격(1·3·7·16·35·80일)은 연구 결과를 참고해 이 사이트에서 정한 값입니다.</p>
+        <button class="btn block" data-go="home" style="margin-top:12px">홈으로</button>
+      </section>`;
+  }
+
   // ---------- 라우팅 & 키보드 ----------
   function go(page) {
     quiz = page === "quiz" ? quiz : null;
+    document.querySelectorAll(".topbar nav [data-go]").forEach(b => b.classList.toggle("on", b.dataset.go === page));
     if (page === "notes") renderNotes();
     else if (page === "glossary") renderGlossary();
     else if (page === "practice" && window.renderPractice) window.renderPractice(app);
     else if (page === "labs") renderLabs();
+    else if (page === "science") renderScience();
     else renderHome();
     window.scrollTo(0, 0);
   }
   document.addEventListener("click", e => {
     const t = e.target.closest("[data-go]");
-    if (t) go(t.dataset.go);
+    if (t) { e.preventDefault(); go(t.dataset.go); }
   });
   document.addEventListener("keydown", e => {
     if (!quiz || !document.querySelector(".qtext")) return;
     const q = quiz.list[quiz.i];
     if (e.target.tagName === "TEXTAREA") return;
+    if (document.getElementById("recallBox") && (e.key === " " || e.key === "Enter")) { e.preventDefault(); reveal(); return; }
+    if (!quiz.answered && quiz.pending != null) {
+      const c = { 1: "sure", 2: "mid", 3: "guess" }[e.key];
+      if (c) { e.preventDefault(); finalize(quiz.pending, c); return; }
+      if (e.key === "Escape") { quiz.pending = null; document.getElementById("confBox").hidden = true; app.querySelectorAll(".choice").forEach(b => b.classList.remove("picked")); quiz.picked = new Set(); const mb = document.getElementById("multiBtn"); if (mb) { mb.disabled = true; } }
+      return;
+    }
     if (e.key === "Enter") {
       if (quiz.answered) { e.preventDefault(); next(); }
-      else if (isMulti(q)) { e.preventDefault(); submit([...quiz.picked]); }
-      else if (!isMC(q)) { e.preventDefault(); submit(document.getElementById("shortInput").value); }
-    } else if (isMC(q) && !quiz.answered && /^[1-9]$/.test(e.key) && +e.key <= q.choices.length) {
-      if (isMulti(q)) togglePick(+e.key); else submit(+e.key);
+      else if (isMulti(q)) { e.preventDefault(); choose([...quiz.picked]); }
+      else if (!isMC(q)) { e.preventDefault(); choose(document.getElementById("shortInput").value); }
+    } else if (isMC(q) && !quiz.answered && !document.getElementById("recallBox") && /^[1-9]$/.test(e.key) && +e.key <= q.choices.length) {
+      if (isMulti(q)) togglePick(+e.key); else choose(+e.key);
     }
   });
 
   updateBadge();
-  renderHome();
+  go("home");
 })();
