@@ -330,3 +330,21 @@ details[open] > summary::before { transform: rotate(90deg); }
   .today-nums b { font-size: 22px; }
   .hyper-box { flex-direction: column; align-items: stretch; }
 }
+
+/* ── 힌트 · 보기별 이유 ── */
+.hint-area { margin-top: 12px; }
+.hint-btn { width: 100%; border-style: dashed; }
+.hint-item { margin-bottom: 8px; padding: 10px 12px; border-radius: 10px; background: var(--bg); font-size: 14px; line-height: 1.6; }
+.hint-item.clue { background: var(--primary-soft); }
+.choice.elim { opacity: .45; text-decoration: line-through; }
+.choice.elim .why-line { text-decoration: none; }
+.why-line { display: block; margin-top: 4px; font-size: 13px; color: var(--muted); text-decoration: none; }
+.choice.correct .why-line { color: var(--good); }
+.choice.wrong .why-line { color: var(--bad); }
+.why-box { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--card); }
+.why-box.not { border: 1px solid var(--bad); }
+.why-box.yes { border: 1px solid var(--good); }
+.why-h { font-weight: 700; margin-bottom: 4px; }
+.why-item { margin-top: 4px; }
+.why-item div { font-size: 14px; }
+.why-item .num { color: var(--muted); font-weight: 700; }

@@ -127,14 +127,14 @@
     while ((store.days[dayKey(d)] || {}).n) { n++; d--; }
     return n;
   }
-  function schedule(id, ok, conf) {
+  function schedule(id, ok, conf, hinted) {
     const t = dayNum();
     const r = store.srs[id];
     const s = r ? { ...r } : { lv: 0, due: t, lapses: 0 };
     const early = r && r.due > t;
     if (!ok) { s.lv = 1; s.lapses = (s.lapses || 0) + 1; s.hyper = conf === "sure"; }
     else if (conf === "guess") { s.lv = 1; }
-    else if (early) { s.lv = Math.max(1, s.lv); }      // 예정보다 일찍 맞힘: 단계 유지
+    else if (early || hinted) { s.lv = Math.max(1, s.lv); s.hyper = false; } // 일찍 맞힘·힌트 사용: 단계 유지
     else { s.lv = Math.min(IV.length - 1, s.lv + (!r && conf === "sure" ? 2 : 1)); s.hyper = false; }
     s.due = t + IV[s.lv];
     s.last = Date.now();
@@ -142,6 +142,44 @@
     store.srs[id] = s;
     return s;
   }
+
+  // ---------- 해설 나누기(핵심 + 보기별 이유) · 힌트 ----------
+  // 해설 = 첫 줄들(핵심) + 마지막에 ①~④ 보기별 한 줄. 끝에서부터 ①…ⓝ이 이어지는 묶음을 찾는다.
+  function parseExpl(q) {
+    if (q._px !== undefined) return q._px;
+    const L = String(q.explanation || "").split("\n");
+    const n = isMC(q) ? q.choices.length : 0;
+    let at = -1;
+    for (let i = L.length - n; n && i >= 0; i--) {
+      if (L.slice(i, i + n).every((l, k) => l.startsWith(NUMS[k]))) { at = i; break; }
+    }
+    q._px = at < 0 ? null : {
+      head: L.slice(0, at).join("\n").trim(),
+      per: L.slice(at, at + n).map((l, k) => l.slice(NUMS[k].length).trim()),
+      tail: L.slice(at + n).join("\n").trim()
+    };
+    return q._px;
+  }
+  // 핵심 단서: 해설 첫 줄에서 정답 보기 글자·번호를 가린 것
+  function clueText(q) {
+    const px = parseExpl(q);
+    if (!px || !px.head) return "";
+    const ans = mcAnswers(q);
+    let h = px.head.replace(/[①-⑩]/g, "○");
+    const others = q.choices.filter((_, i) => !ans.includes(i + 1)).join(" ");
+    ans.forEach(k => {
+      const a = q.choices[k - 1] || "";
+      if (a.length >= 2) h = h.split(a).join("○○○");
+      a.split(/[\s,·/()\[\]→\-]+/).filter(t => t.length >= 2 && !others.includes(t)).forEach(t => { h = h.split(t).join("○○"); });
+    });
+    return ans.some(k => (q.choices[k - 1] || "").length >= 2 && h.includes(q.choices[k - 1])) ? "" : h;
+  }
+  const hintMax = q => {
+    if (!isMC(q) || !parseExpl(q)) return 0;
+    const elim = Math.max(0, q.choices.length - mcAnswers(q).length - 1);
+    return elim + (clueText(q) ? 1 : 0);
+  };
+  const hintCount = () => quiz.hint.elim.length + (quiz.hint.clue ? 1 : 0);
 
   // ---------- 홈 ----------
   const opts = { category: loadCat(), exam: "", domain: "", freq: 0, count: 10, source: "smart" };
@@ -353,6 +391,7 @@
     quiz.answered = false;
     quiz.picked = new Set();
     quiz.pending = null;
+    quiz.hint = { elim: [], clue: false };
     const inNote = store.wrong[q.id];
     const r = store.srs[q.id];
     const recall = store.settings.recall && isMC(q) && !re;
@@ -383,6 +422,11 @@
             <input type="text" id="shortInput" placeholder="정답을 입력하세요" autocomplete="off" style="flex:3">
             <button class="btn primary" id="shortBtn" style="flex:1">확인</button>
           </div>`}
+        ${hintMax(q) ? `
+        <div class="hint-area" id="hintArea" ${recall ? "hidden" : ""}>
+          <div id="hintBox"></div>
+          <button class="btn small hint-btn" id="hintBtn">💡 힌트 보기 <span class="muted">(0/${hintMax(q)})</span></button>
+        </div>` : ""}
         <div id="confBox" class="conf" hidden>
           <div class="conf-q">얼마나 확신하나요?</div>
           <div class="conf-btns">
@@ -408,6 +452,8 @@
     }
     const rv = document.getElementById("revealBtn");
     if (rv) rv.onclick = reveal;
+    const hb = document.getElementById("hintBtn");
+    if (hb) hb.onclick = useHint;
     app.querySelectorAll("#confBox button").forEach(b => b.onclick = () => finalize(quiz.pending, b.dataset.c));
     document.getElementById("quitBtn").onclick = () => {
       if (quiz.results.length) renderResult(); else go("home");
@@ -417,7 +463,7 @@
   function kbdHint(q) {
     const conf = store.settings.conf;
     if (!isMC(q)) return `Enter로 제출${conf ? " · 1~3 확신도" : ""} · 다시 Enter로 다음`;
-    return `키보드: 숫자키로 ${isMulti(q) ? "선택/해제 · Enter로 제출" : "선택"}${conf ? " · 이어서 1~3으로 확신도" : ""} · Enter로 다음`;
+    return `키보드: 숫자키로 ${isMulti(q) ? "선택/해제 · Enter로 제출" : "선택"}${conf ? " · 이어서 1~3으로 확신도" : ""}${hintMax(q) ? " · H 힌트" : ""} · Enter로 다음`;
   }
 
   function reveal() {
@@ -427,13 +473,46 @@
     document.getElementById("choices").hidden = false;
     const mb = document.getElementById("multiBtn");
     if (mb) mb.hidden = false;
+    const ha = document.getElementById("hintArea");
+    if (ha) ha.hidden = false;
+  }
+
+  // 힌트: ① 오답 하나 지우고 그 이유 → ② 하나 더 → ③ 핵심 단서(정답 글자는 가림)
+  function useHint() {
+    if (quiz.answered || quiz.pending != null || document.getElementById("recallBox")) return;
+    const q = quiz.list[quiz.i];
+    const max = hintMax(q);
+    if (hintCount() >= max) return;
+    const px = parseExpl(q);
+    const ans = mcAnswers(q);
+    const elimMax = Math.max(0, q.choices.length - ans.length - 1);
+    const box = document.getElementById("hintBox");
+    if (quiz.hint.elim.length < elimMax) {
+      const cand = q.choices.map((_, i) => i + 1).filter(k => !ans.includes(k) && !quiz.hint.elim.includes(k) && !quiz.picked.has(k));
+      const pool = cand.length ? cand : q.choices.map((_, i) => i + 1).filter(k => !ans.includes(k) && !quiz.hint.elim.includes(k));
+      const k = pool[Math.floor(Math.random() * pool.length)];
+      quiz.hint.elim.push(k);
+      if (quiz.picked.has(k)) { quiz.picked.delete(k); if (isMulti(q)) togglePick(-1); }
+      const b = app.querySelector(`.choice[data-k="${k}"]`);
+      b.classList.add("elim"); b.classList.remove("picked"); b.disabled = true;
+      box.insertAdjacentHTML("beforeend", `<div class="hint-item"><b>🙅 ${NUMS[k - 1]}은(는) 답이 아니에요.</b> ${esc(px.per[k - 1])}</div>`);
+    } else if (!quiz.hint.clue) {
+      quiz.hint.clue = true;
+      box.insertAdjacentHTML("beforeend", `<div class="hint-item clue"><b>🔎 핵심 단서</b> <span class="muted small">(정답에 가까운 힌트)</span><br> ${esc(clueText(q))}</div>`);
+    }
+    const btn = document.getElementById("hintBtn");
+    const used = hintCount();
+    btn.innerHTML = used >= max ? "힌트를 모두 봤어요" : `💡 힌트 하나 더 <span class="muted">(${used}/${max})</span>`;
+    btn.disabled = used >= max;
   }
 
   function togglePick(k) {
     if (quiz.answered || quiz.pending != null) return;
     const q = quiz.list[quiz.i];
     const need = q.answer.length;
-    if (quiz.picked.has(k)) quiz.picked.delete(k);
+    if (k < 0) { /* 표시만 갱신 */ }
+    else if (quiz.hint.elim.includes(k)) return;
+    else if (quiz.picked.has(k)) quiz.picked.delete(k);
     else if (quiz.picked.size < need) quiz.picked.add(k);
     app.querySelectorAll(".choice").forEach(b => b.classList.toggle("picked", quiz.picked.has(+b.dataset.k)));
     const btn = document.getElementById("multiBtn");
@@ -445,6 +524,7 @@
   function choose(given) {
     if (quiz.answered) return;
     const q = quiz.list[quiz.i];
+    if (isMC(q) && !isMulti(q) && quiz.hint.elim.includes(+given)) return;
     if (isMulti(q) && (!Array.isArray(given) || given.length !== q.answer.length)) return;
     if (!isMC(q) && !String(given).trim()) return;
     if (!store.settings.conf || quiz.re[quiz.i]) return finalize(given, null);
@@ -482,12 +562,22 @@
     }
     document.getElementById("confBox").hidden = true;
     document.getElementById("kbdHint").textContent = "Enter로 다음";
+    const ha = document.getElementById("hintArea");
+    if (ha) { const hb = document.getElementById("hintBtn"); if (hb) hb.remove(); if (!quiz.hint.elim.length && !quiz.hint.clue) ha.remove(); }
     quiz.answered = true;
-    const res = record(q, ok, given, conf, re);
+    const hints = hintCount();
+    // 힌트를 2개 이상 쓰고 맞힌 것은 '찍음'과 같게(내일 다시), 1개면 단계를 올리지 않음
+    const effConf = ok && hints >= 2 ? "guess" : conf;
+    const res = record(q, ok, given, effConf, re, hints > 0);
+    const px = isMC(q) ? parseExpl(q) : null;
+    if (px) app.querySelectorAll(".choice").forEach(b => {
+      const k = +b.dataset.k;
+      b.querySelector("span:last-child").insertAdjacentHTML("beforeend", `<span class="why-line">${esc(px.per[k - 1])}</span>`);
+    });
 
     // 틀렸거나 찍어서 맞힌 문제는 같은 회차 안에서 몇 문제 뒤 한 번 더(연속 재학습)
     let reMsg = "";
-    if ((!ok || conf === "guess") && (quiz.relearned[q.id] || 0) < 2) {
+    if ((!ok || effConf === "guess") && (quiz.relearned[q.id] || 0) < 2) {
       quiz.relearned[q.id] = (quiz.relearned[q.id] || 0) + 1;
       const at = Math.min(quiz.i + 1 + RELEARN_GAP, quiz.list.length);
       quiz.list.splice(at, 0, q); quiz.re.splice(at, 0, true);
@@ -497,6 +587,8 @@
     const msgs = [];
     if (!re && conf === "sure" && !ok) msgs.push(`<div class="fb-note hyper"><b>🔥 착각 발견</b> — 확신했던 오답은 피드백을 받으면 오히려 잘 고쳐집니다. 해설을 읽고 <b>왜 그렇게 생각했는지</b> 한 줄로 짚어 보세요.</div>`);
     if (!re && conf === "guess" && ok) msgs.push(`<div class="fb-note">🎲 맞혔지만 찍었어요. 아직 아는 것이 아니라서 내일 다시 나옵니다.</div>`);
+    else if (!re && ok && hints >= 2) msgs.push(`<div class="fb-note">💡 힌트 ${hints}개로 맞혔어요. 혼자 떠올린 것이 아니라서 내일 다시 나옵니다.</div>`);
+    else if (!re && ok && hints === 1) msgs.push(`<div class="fb-note">💡 힌트 1개를 썼어요. 이번에는 복습 간격을 늘리지 않습니다.</div>`);
     if (reMsg) msgs.push(`<div class="fb-note">${reMsg}</div>`);
     if (!re && res.srs) msgs.push(`<div class="muted small">📅 다음 복습: ${inDays(res.srs.due - dayNum())} (${fmtDate(res.srs.due)}) · ${MEM[memLevel(res.srs)]}</div>`);
     if (re && ok) msgs.push(`<div class="muted small">👍 다시 꺼내는 데 성공했어요. 복습 일정은 처음 답 기준으로 유지됩니다.</div>`);
@@ -510,7 +602,7 @@
       <div class="feedback ${ok ? "good" : "bad"}">
         <div class="title">${ok ? "⭕ 정답입니다!" : "❌ 틀렸습니다"}${conf ? ` <span class="muted small">· ${CONF[conf]}</span>` : ""}</div>
         <div class="answer-line">정답: <b>${esc(answerText(q))}</b>${!ok ? ` <span class="muted">(내 답: ${esc(givenText(q, given))})</span>` : ""}</div>
-        ${q.explanation ? `<div class="why"><b>💡 이유</b>\n${esc(q.explanation)}</div>` : ""}
+        ${px ? whyHTML(q, px, given, ok) : q.explanation ? `<div class="why"><b>💡 이유</b>\n${esc(q.explanation)}</div>` : ""}
         ${q.seen && q.seen.length ? `<div class="muted seen">🗓 출제: ${esc(q.seen.join(", "))}</div>` : ""}
         <div class="fb-msgs">${msgs.join("")}</div>
       </div>
@@ -519,7 +611,22 @@
     document.getElementById("nextBtn").focus({ preventScroll: true });
   }
 
-  function record(q, ok, given, conf, re) {
+  // 채점 뒤: 내가 고른 보기가 왜 답이 아닌지 → 정답인 이유 → 핵심
+  function whyHTML(q, px, given, ok) {
+    const ans = mcAnswers(q);
+    const chosen = (Array.isArray(given) ? given : [given]).map(Number);
+    const wrongPicked = chosen.filter(k => !ans.includes(k));
+    const missed = ans.filter(k => !chosen.includes(k));
+    const item = (k) => `<div class="why-item"><span class="num">${NUMS[k - 1]}</span> <b>${esc(q.choices[k - 1])}</b><div>${esc(px.per[k - 1])}</div></div>`;
+    return `
+      ${wrongPicked.length ? `<div class="why-box not"><div class="why-h">❓ 내가 고른 답이 정답이 아닌 이유</div>${wrongPicked.map(item).join("")}</div>` : ""}
+      <div class="why-box yes"><div class="why-h">✅ ${ok ? "정답인 이유" : missed.length && missed.length < ans.length ? "놓친 정답" : "정답인 이유"}</div>${(ok ? ans : (missed.length ? missed : ans)).map(item).join("")}</div>
+      ${px.head ? `<div class="why"><b>💡 핵심</b>\n${esc(px.head)}</div>` : ""}
+      ${px.tail ? `<div class="why muted">${esc(px.tail)}</div>` : ""}
+      <div class="muted small" style="margin-top:6px">다른 보기가 왜 답이 아닌지는 위 보기마다 적어 두었어요.</div>`;
+  }
+
+  function record(q, ok, given, conf, re, hinted) {
     let graduated = false, srs = null;
     if (!re) {
       const s = store.stats[q.id] || (store.stats[q.id] = { tries: 0, correct: 0 });
@@ -528,7 +635,7 @@
       const log = todayLog();
       log.n++; if (ok) log.ok++;
       if (!store.srs[q.id]) log.newBy[catOf(q)] = (log.newBy[catOf(q)] || 0) + 1;
-      srs = schedule(q.id, ok, conf);
+      srs = schedule(q.id, ok, conf, hinted);
       const today = dayNum();
       if (!ok) {
         const w = store.wrong[q.id] || (store.wrong[q.id] = { count: 0, memo: "", added: Date.now() });
@@ -539,7 +646,7 @@
         if (w.streak >= CLEAR_STREAK) { delete store.wrong[q.id]; graduated = true; }
       }
     }
-    quiz.results.push({ id: q.id, ok, given, conf, re, graduated });
+    quiz.results.push({ id: q.id, ok, given, conf, re, graduated, hints: hinted ? hintCount() : 0 });
     save();
     return { graduated, srs };
   }
@@ -556,7 +663,8 @@
     const correct = r.filter(x => x.ok).length;
     const wrongs = r.filter(x => !x.ok);
     const hyperN = r.filter(x => !x.ok && x.conf === "sure").length;
-    const guessN = r.filter(x => x.ok && x.conf === "guess").length;
+    const guessN = r.filter(x => x.ok && x.conf === "guess" && !x.hints).length;
+    const hintN = r.filter(x => x.hints).length;
     const reOk = all.filter(x => x.re && x.ok).length, reN = all.filter(x => x.re).length;
     const pct = r.length ? Math.round(correct / r.length * 100) : 0;
     const t = dayNum();
@@ -572,6 +680,7 @@
         <div class="result-notes">
           ${hyperN ? `<div>🔥 확신했는데 틀린 문제 <b>${hyperN}</b> — 착각 교정 목록에 올렸어요.</div>` : ""}
           ${guessN ? `<div>🎲 찍어서 맞힌 문제 <b>${guessN}</b> — 내일 다시 나옵니다.</div>` : ""}
+          ${hintN ? `<div>💡 힌트를 쓴 문제 <b>${hintN}</b> — 복습 간격을 늘리지 않았어요.</div>` : ""}
           <div>📅 내일 복습 예정 <b>${tomorrow}</b>문제${left ? ` · 오늘 남은 학습 ${left}문제` : ""}</div>
           <div class="muted small">💤 공부한 날 밤 잠을 자는 동안 기억이 정리·강화됩니다. 내일 다시 꺼내 보면 훨씬 오래 남아요.</div>
         </div>
@@ -1134,6 +1243,7 @@
       if (e.key === "Escape") { quiz.pending = null; document.getElementById("confBox").hidden = true; app.querySelectorAll(".choice").forEach(b => b.classList.remove("picked")); quiz.picked = new Set(); const mb = document.getElementById("multiBtn"); if (mb) { mb.disabled = true; } }
       return;
     }
+    if ((e.key === "h" || e.key === "H" || e.key === "ㅗ") && !quiz.answered && e.target.tagName !== "INPUT") { e.preventDefault(); useHint(); return; }
     if (e.key === "Enter") {
       if (quiz.answered) { e.preventDefault(); next(); }
       else if (isMulti(q)) { e.preventDefault(); choose([...quiz.picked]); }
