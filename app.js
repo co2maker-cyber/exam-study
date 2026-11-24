@@ -83,6 +83,7 @@
         <div class="seg cat-seg" id="catSeg">
           ${CATS.map(c => `<button data-c="${c.id}" class="${opts.category === c.id ? "on" : ""}"><span class="full">${esc(c.name)}</span><span class="short">${esc(c.short || c.name)}</span><small>${inCat(c.id).length}문제</small></button>`).join("")}
         </div>` : ""}
+        ${(CATS.find(c => c.id === opts.category) || {}).desc ? `<p class="muted cat-desc">${esc(CATS.find(c => c.id === opts.category).desc)}</p>` : ""}
         <div class="stats">
           <div class="stat"><b>${pool.length}</b><span>전체 문제</span></div>
           <div class="stat"><b>${tried.length}</b><span>풀어본 문제</span></div>
@@ -491,7 +492,12 @@
     const terms = allTerms();
     const knownCount = terms.filter(g => store.known[g.id]).length;
     const cats = [MY_CAT, ...(window.GLOSSARY_CATEGORIES || [])];
-    const isNet = gsubj() === "net2";
+    const isNet = gsubj() !== "aws";
+    const GT = {
+      aws: { intro: "기출에 나온 AWS 용어", ex: "예: Kinesis, 서브넷, NAT 게이트웨이", q: "표에서 검색 (예: S3, 캐시, 라이선스)" },
+      net2: { intro: "네트워크관리사 용어(라우팅·RIP·OSPF·서브넷·DHCP 등)", ex: "예: VRRP, 서브넷, 스위칭 허브", q: "표에서 검색 (예: OSPF, 224.0.0.5, AD)" },
+      ict: { intro: "정보통신 유지보수 용어(고시·설비·도면·광통신·이동통신)", ex: "예: OTDR, 헤드엔드, 계통도", q: "표에서 검색 (예: 성능점검, PON, RSRP)" }
+    }[gsubj()] || {};
     const baseN = terms.filter(g => !g.custom).length, mineN = terms.length - baseN;
     app.innerHTML = `
       <section class="card">
@@ -499,7 +505,7 @@
         <div class="seg cat-seg" id="glSubj">
           ${CATS.map(c => `<button data-c="${c.id}" class="${gsubj() === c.id ? "on" : ""}"><span class="full">${esc(c.name)}</span><span class="short">${esc(c.short || c.name)}</span><small>${GLOSSARY_BASE.filter(g => (g.subject || "aws") === c.id).length}개</small></button>`).join("")}
         </div>
-        <p class="muted">${isNet ? "네트워크관리사 용어(라우팅·RIP·OSPF·서브넷·DHCP 등)" : "기출에 나온 AWS 용어"} ${baseN}개${mineN ? ` + 내 단어 ${mineN}개` : ""}.
+        <p class="muted">${GT.intro} ${baseN}개${mineN ? ` + 내 단어 ${mineN}개` : ""}.
         '뜻 가리기'로 스스로 테스트하고, 외운 용어는 체크하세요.</p>
         <div class="progress" style="margin:10px 0 4px"><div id="glBar"></div></div>
         <div class="muted" style="font-size:13px" id="glBarText"></div>
@@ -509,14 +515,14 @@
         <h2>단어 추가 · 뜻 찾기</h2>
         <p class="muted" style="margin-top:-6px">모르는 단어를 입력하면 용어 표 → 기출 해설 → 위키백과 순서로 뜻을 찾아 줍니다. 찾은 뜻을 고쳐서 '내 단어'로 저장하세요.</p>
         <div class="row">
-          <input type="text" id="lkWord" placeholder="${isNet ? "예: VRRP, 서브넷, 스위칭 허브" : "예: Kinesis, 서브넷, NAT 게이트웨이"}" autocomplete="off" style="flex:3">
+          <input type="text" id="lkWord" placeholder="${GT.ex}" autocomplete="off" style="flex:3">
           <button class="btn primary" id="lkBtn" style="flex:1">뜻 찾기</button>
         </div>
         <div id="lkResult"></div>
       </section>
 
       <section class="card gl-controls">
-        <input type="text" id="glSearch" placeholder="${isNet ? "표에서 검색 (예: OSPF, 224.0.0.5, AD)" : "표에서 검색 (예: S3, 캐시, 라이선스)"}" value="${esc(gopts.q)}" autocomplete="off">
+        <input type="text" id="glSearch" placeholder="${GT.q}" value="${esc(gopts.q)}" autocomplete="off">
         <div class="row" style="margin-top:10px">
           <select id="glCat" style="flex:2">
             <option value="">전체 분류</option>
@@ -635,12 +641,12 @@
         ${local.length ? `<div class="lk-block"><div class="lk-title">📘 용어 표에 있어요</div>
           ${local.map(g => `<div class="lk-item"><b>${esc(g.term)}</b> <span class="muted">${esc(g.ko)}</span><div>${esc(g.meaning)}</div>
             <button class="link lk-show" data-term="${esc(g.term)}">표에서 보기</button></div>`).join("")}</div>` : ""}
-        ${snippets.length ? `<div class="lk-block"><div class="lk-title">📝 기출 해설에서 찾았어요 ${qCount ? `<span class="muted">(문제·보기 ${qCount}곳에 등장)</span>` : ""}</div>
-          ${snippets.map((s, i) => `<div class="lk-item"><span class="tag">원본 ${s.no}번</span> ${esc(s.text)} <button class="link lk-snip" data-i="${i}">이 문장 사용</button></div>`).join("")}</div>` : ""}
+        ${snippets.length ? `<div class="lk-block"><div class="lk-title">📝 ${gsubj() === "ict" ? "예상문제" : "기출"} 해설에서 찾았어요 ${qCount ? `<span class="muted">(문제·보기 ${qCount}곳에 등장)</span>` : ""}</div>
+          ${snippets.map((s, i) => `<div class="lk-item">${s.no ? `<span class="tag">원본 ${s.no}번</span> ` : ""}${esc(s.text)} <button class="link lk-snip" data-i="${i}">이 문장 사용</button></div>`).join("")}</div>` : ""}
         <div class="lk-block" id="lkWiki"><div class="lk-title">🌐 위키백과</div><div class="muted">찾는 중…</div></div>
         <div class="lk-links muted">더 찾아보기:
           ${isNet ? "" : `<a href="https://docs.aws.amazon.com/search/doc-search.html?searchPath=documentation&searchQuery=${enc}" target="_blank" rel="noopener">AWS 공식 문서 ↗</a> ·`}
-          <a href="https://www.google.com/search?q=${encodeURIComponent((isNet ? "네트워크 " : "AWS ") + word)}" target="_blank" rel="noopener">Google ↗</a>
+          <a href="https://www.google.com/search?q=${encodeURIComponent(({ aws: "AWS ", net2: "네트워크 ", ict: "정보통신 " }[gsubj()] || "") + word)}" target="_blank" rel="noopener">Google ↗</a>
         </div>
         <div id="lkEditor"></div>`;
 

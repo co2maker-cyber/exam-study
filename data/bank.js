@@ -13,7 +13,9 @@ window.QUESTION_BANK = window.QUESTION_BANK || [];
 // 과목(카테고리) 목록 — 홈 화면에서 과목을 골라 풉니다.
 window.CATEGORIES = [
   { id: "aws", name: "AWS 클라우드 프랙티셔너", short: "AWS CLF-C02" },
-  { id: "net2", name: "네트워크관리사 2급 필기", short: "네트워크관리사 2급" }
+  { id: "net2", name: "네트워크관리사 2급 필기", short: "네트워크관리사 2급" },
+  { id: "ict", name: "정보통신 유지보수 관리", short: "정보통신 유지보수",
+    desc: "「정보통신 유지보수 관리 기준 실무 강의자료」 내용으로 만든 예상문제입니다(기출 아님)." }
 ];
 window.D1 = "Domain 1 · 클라우드 개념";
 window.D2 = "Domain 2 · 보안 및 규정 준수";
@@ -58,6 +60,26 @@ window.addNet = function (subject, rows) {
       explanation: r[4],
       seen: seen,
       freq: seen.length
+    });
+  });
+};
+
+/*
+ * 정보통신 유지보수 관리 — 강의자료로 만든 예상문제
+ * 한 문제 = [문제, 보기 배열, 정답, 해설]  (번호는 등록 순서대로 자동)
+ */
+window.addIct = function (section, rows) {
+  rows.forEach(function (r) {
+    if (!r) return;
+    window.ICT_NO = (window.ICT_NO || 0) + 1;
+    window.QUESTION_BANK.push({
+      id: "ict-" + String(window.ICT_NO).padStart(3, "0"),
+      category: "ict",
+      exam: section,
+      question: r[0],
+      choices: r[1],
+      answer: r[2],
+      explanation: r[3]
     });
   });
 };
