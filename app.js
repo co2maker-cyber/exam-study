@@ -29,7 +29,7 @@
 
   // ---------- 저장소 ----------
   function blank() {
-    return { stats: {}, wrong: {}, known: {}, custom: [], srs: {}, days: {}, settings: { conf: true, recall: false, newPerDay: 10 } };
+    return { stats: {}, wrong: {}, known: {}, custom: [], srs: {}, days: {}, settings: { conf: true, recall: false, newPerDay: 10, abbr: true } };
   }
   function normalize(s) {
     const b = blank();
@@ -181,6 +181,64 @@
   };
   const hintCount = () => quiz.hint.elim.length + (quiz.hint.clue ? 1 : 0);
 
+  // ---------- 영어 약어 풀이 ----------
+  const AB = window.ABBR || {}, ABG = window.ABBR_GROUPS || {}, ABA = window.ABBR_ALIAS || {};
+  const AB_COMMON = new Set(["AWS", "IP", "PC", "ID", "IT", "TV", "AI", "DB", "OS"]); // 너무 흔해 목록에서는 뺌(밑줄 풀이는 유지)
+  const AB_GROUP_KEYS = Object.keys(ABG).sort((a, b) => b.length - a.length);
+  const AB_TOKEN = /(?<![A-Za-z0-9])([A-Z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*|[A-Z][0-9]+[A-Za-z0-9]*)(?![A-Za-z0-9])/g;
+  function abLookup(w) {
+    if (ABG[w]) return { key: w, v: ABG[w] };
+    if (AB[w]) return { key: w, v: AB[w] };
+    if (ABA[w] && AB[ABA[w]]) return { key: ABA[w], v: AB[ABA[w]] };
+    const m = /^L([1-7])$/.exec(w);
+    if (m) return { key: w, v: [`Layer ${m[1]}`, `OSI ${m[1]}계층`] };
+    const base = w.replace(/v?\d+$/, "");
+    if (base !== w && AB[base]) return { key: base, v: AB[base] };
+    return null;
+  }
+  // 글을 안전하게 바꾸면서 약어에 밑줄(누르면 풀이)을 붙임. found에 찾은 약어를 모음
+  function abbrHTML(text, found) {
+    const s = String(text ?? "");
+    if (!store.settings.abbr) return esc(s);
+    const hits = [];
+    for (const g of AB_GROUP_KEYS) { let i = 0; while ((i = s.indexOf(g, i)) >= 0) { hits.push([i, i + g.length, g]); i += g.length; } }
+    for (const m of s.matchAll(AB_TOKEN)) { const a = m.index, b = a + m[1].length; if (!hits.some(([x, y]) => a < y && b > x)) hits.push([a, b, m[1]]); }
+    hits.sort((x, y) => x[0] - y[0]);
+    let out = "", pos = 0;
+    for (const [a, b, w] of hits) {
+      if (a < pos) continue;
+      const L = abLookup(w);
+      out += esc(s.slice(pos, a));
+      if (L) { if (found) found.add(L.key); out += `<abbr class="ab" data-ab="${esc(w)}" title="${esc(L.v[0] + " — " + L.v[1])}">${esc(w)}</abbr>`; }
+      else out += esc(w);
+      pos = b;
+    }
+    return out + esc(s.slice(pos));
+  }
+  function abbrBox(keys, title, skip) {
+    if (!store.settings.abbr) return "";
+    const list = [...keys].filter(k => !AB_COMMON.has(k) && !(skip && skip.has(k))).map(k => [k, (abLookup(k) || {}).v]).filter(x => x[1]);
+    if (!list.length) return "";
+    return `<div class="ab-box"><div class="ab-title">📖 ${title}</div>${list.map(([k, v]) => `<div class="ab-row"><b>${esc(k)}</b> <span class="ab-full">${esc(v[0])}</span><div class="ab-mean">${esc(v[1])}</div></div>`).join("")}</div>`;
+  }
+  // 밑줄 약어를 누르면 풀이 말풍선
+  let abTip = null;
+  document.addEventListener("click", e => {
+    const a = e.target.closest && e.target.closest("abbr.ab");
+    if (abTip) { abTip.remove(); abTip = null; }
+    if (!a) return;
+    e.preventDefault(); e.stopPropagation();
+    const L = abLookup(a.dataset.ab);
+    if (!L) return;
+    abTip = document.createElement("div");
+    abTip.className = "ab-tip";
+    abTip.innerHTML = `<b>${esc(a.dataset.ab)}</b> = ${esc(L.v[0])}<div>${esc(L.v[1])}</div>`;
+    document.body.appendChild(abTip);
+    const r = a.getBoundingClientRect(), w = abTip.offsetWidth;
+    abTip.style.top = (window.scrollY + r.bottom + 6) + "px";
+    abTip.style.left = Math.max(8, Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - w - 8)) + "px";
+  }, true);
+
   // ---------- 홈 ----------
   const opts = { category: loadCat(), exam: "", domain: "", freq: 0, count: 10, source: "smart" };
 
@@ -312,6 +370,7 @@
               <div class="seg" id="newSeg">${[5, 10, 20, 30].map(n => `<button data-v="${n}" class="${set.newPerDay === n ? "on" : ""}">${n}개</button>`).join("")}</div>
             </div>
             <label class="toggle"><input type="checkbox" id="setConf" ${set.conf ? "checked" : ""}> 답을 고른 뒤 확신도 묻기 <span class="muted small">(확실·애매·찍음 → 복습 간격에 반영)</span></label>
+            <label class="toggle"><input type="checkbox" id="setAbbr" ${set.abbr !== false ? "checked" : ""}> 영어 약어 풀이 <span class="muted small">(약어에 밑줄 — 누르면 풀어 쓴 말과 뜻, 문제 아래 약어 목록)</span></label>
             <label class="toggle"><input type="checkbox" id="setRecall" ${set.recall ? "checked" : ""}> 먼저 떠올리기 <span class="muted small">(보기를 가린 채 답을 먼저 떠올린 뒤 보기 열기)</span></label>
           </div>
         </details>
@@ -342,6 +401,7 @@
     document.querySelectorAll("#newSeg button").forEach(b => b.onclick = () => { store.settings.newPerDay = +b.dataset.v; save(); renderHome(); });
     $("setConf").onchange = e => { store.settings.conf = e.target.checked; save(); };
     $("setRecall").onchange = e => { store.settings.recall = e.target.checked; save(); };
+    $("setAbbr").onchange = e => { store.settings.abbr = e.target.checked; save(); };
     $("startBtn").onclick = () => {
       const list = pickQuestions(opts);
       if (!list.length) {
@@ -395,6 +455,8 @@
     const inNote = store.wrong[q.id];
     const r = store.srs[q.id];
     const recall = store.settings.recall && isMC(q) && !re;
+    quiz.qAb = new Set();
+    const qHTML = abbrHTML(q.question, quiz.qAb);
     const kind = re ? `<span class="tag re">🔁 다시 한 번</span>` : !r ? `<span class="tag new">새 문제</span>` : `<span class="tag">복습 · ${MEM[memLevel(r)]}</span>`;
 
     app.innerHTML = `
@@ -405,7 +467,8 @@
         </div>
         <div class="progress"><div style="width:${quiz.i / total * 100}%"></div></div>
         ${(q.domain || q.exam) ? `<div class="muted" style="font-size:13px">${esc(q.domain || q.exam)}</div>` : ""}
-        <div class="qtext">${esc(q.question)}</div>
+        <div class="qtext">${qHTML}</div>
+        ${abbrBox(quiz.qAb, "문제 속 약어")}
         ${q.image ? `<a href="${esc(q.image)}" target="_blank" rel="noopener" class="qimg-link"><img class="qimg" src="${esc(q.image)}" alt="문제 그림" loading="lazy"></a><div class="muted small qimg-hint">그림을 누르면 크게 볼 수 있어요.</div>` : ""}
         ${recall ? `
           <div class="recall-box" id="recallBox">
@@ -495,10 +558,10 @@
       if (quiz.picked.has(k)) { quiz.picked.delete(k); if (isMulti(q)) togglePick(-1); }
       const b = app.querySelector(`.choice[data-k="${k}"]`);
       b.classList.add("elim"); b.classList.remove("picked"); b.disabled = true;
-      box.insertAdjacentHTML("beforeend", `<div class="hint-item"><b>🙅 ${NUMS[k - 1]}은(는) 답이 아니에요.</b> ${esc(px.per[k - 1])}</div>`);
+      box.insertAdjacentHTML("beforeend", `<div class="hint-item"><b>🙅 ${NUMS[k - 1]}은(는) 답이 아니에요.</b> ${abbrHTML(px.per[k - 1])}</div>`);
     } else if (!quiz.hint.clue) {
       quiz.hint.clue = true;
-      box.insertAdjacentHTML("beforeend", `<div class="hint-item clue"><b>🔎 핵심 단서</b> <span class="muted small">(정답에 가까운 힌트)</span><br> ${esc(clueText(q))}</div>`);
+      box.insertAdjacentHTML("beforeend", `<div class="hint-item clue"><b>🔎 핵심 단서</b> <span class="muted small">(정답에 가까운 힌트)</span><br> ${abbrHTML(clueText(q))}</div>`);
     }
     const btn = document.getElementById("hintBtn");
     const used = hintCount();
@@ -570,9 +633,11 @@
     const effConf = ok && hints >= 2 ? "guess" : conf;
     const res = record(q, ok, given, effConf, re, hints > 0);
     const px = isMC(q) ? parseExpl(q) : null;
-    if (px) app.querySelectorAll(".choice").forEach(b => {
+    const restAb = new Set();
+    if (isMC(q)) app.querySelectorAll(".choice").forEach(b => {
       const k = +b.dataset.k;
-      b.querySelector("span:last-child").insertAdjacentHTML("beforeend", `<span class="why-line">${esc(px.per[k - 1])}</span>`);
+      const sp = b.querySelector("span:last-child");
+      sp.innerHTML = abbrHTML(q.choices[k - 1], restAb) + (px ? `<span class="why-line">${abbrHTML(px.per[k - 1], restAb)}</span>` : "");
     });
 
     // 틀렸거나 찍어서 맞힌 문제는 같은 회차 안에서 몇 문제 뒤 한 번 더(연속 재학습)
@@ -602,7 +667,8 @@
       <div class="feedback ${ok ? "good" : "bad"}">
         <div class="title">${ok ? "⭕ 정답입니다!" : "❌ 틀렸습니다"}${conf ? ` <span class="muted small">· ${CONF[conf]}</span>` : ""}</div>
         <div class="answer-line">정답: <b>${esc(answerText(q))}</b>${!ok ? ` <span class="muted">(내 답: ${esc(givenText(q, given))})</span>` : ""}</div>
-        ${px ? whyHTML(q, px, given, ok) : q.explanation ? `<div class="why"><b>💡 이유</b>\n${esc(q.explanation)}</div>` : ""}
+        ${px ? whyHTML(q, px, given, ok, restAb) : q.explanation ? `<div class="why"><b>💡 이유</b>\n${abbrHTML(q.explanation, restAb)}</div>` : ""}
+        ${abbrBox(restAb, "보기·해설 속 약어", quiz.qAb)}
         ${q.seen && q.seen.length ? `<div class="muted seen">🗓 출제: ${esc(q.seen.join(", "))}</div>` : ""}
         <div class="fb-msgs">${msgs.join("")}</div>
       </div>
@@ -612,17 +678,17 @@
   }
 
   // 채점 뒤: 내가 고른 보기가 왜 답이 아닌지 → 정답인 이유 → 핵심
-  function whyHTML(q, px, given, ok) {
+  function whyHTML(q, px, given, ok, found) {
     const ans = mcAnswers(q);
     const chosen = (Array.isArray(given) ? given : [given]).map(Number);
     const wrongPicked = chosen.filter(k => !ans.includes(k));
     const missed = ans.filter(k => !chosen.includes(k));
-    const item = (k) => `<div class="why-item"><span class="num">${NUMS[k - 1]}</span> <b>${esc(q.choices[k - 1])}</b><div>${esc(px.per[k - 1])}</div></div>`;
+    const item = (k) => `<div class="why-item"><span class="num">${NUMS[k - 1]}</span> <b>${abbrHTML(q.choices[k - 1], found)}</b><div>${abbrHTML(px.per[k - 1], found)}</div></div>`;
     return `
       ${wrongPicked.length ? `<div class="why-box not"><div class="why-h">❓ 내가 고른 답이 정답이 아닌 이유</div>${wrongPicked.map(item).join("")}</div>` : ""}
       <div class="why-box yes"><div class="why-h">✅ ${ok ? "정답인 이유" : missed.length && missed.length < ans.length ? "놓친 정답" : "정답인 이유"}</div>${(ok ? ans : (missed.length ? missed : ans)).map(item).join("")}</div>
-      ${px.head ? `<div class="why"><b>💡 핵심</b>\n${esc(px.head)}</div>` : ""}
-      ${px.tail ? `<div class="why muted">${esc(px.tail)}</div>` : ""}
+      ${px.head ? `<div class="why"><b>💡 핵심</b>\n${abbrHTML(px.head, found)}</div>` : ""}
+      ${px.tail ? `<div class="why muted">${abbrHTML(px.tail, found)}</div>` : ""}
       <div class="muted small" style="margin-top:6px">다른 보기가 왜 답이 아닌지는 위 보기마다 적어 두었어요.</div>`;
   }
 
@@ -709,13 +775,13 @@
     return `
       <div class="list-item" data-id="${esc(q.id)}">
         <div>${CATS.length > 1 ? `<span class="tag">${esc((CATS.find(c => c.id === catOf(q)) || {}).short || catOf(q))}</span>` : ""}${q.no ? `<span class="tag">원본 ${q.no}번</span>` : ""}${freqTag(q)}${(q.domain || q.exam) ? `<span class="tag">${esc(q.domain || q.exam)}</span>` : ""}${w ? `<span class="tag bad">${w.count}회 틀림</span>` : ""}${s && s.hyper ? `<span class="tag hot">🔥 착각</span>` : ""}</div>
-        <div style="font-weight:600;margin-top:4px;white-space:pre-wrap">${esc(q.question)}</div>
+        <div style="font-weight:600;margin-top:4px;white-space:pre-wrap">${abbrHTML(q.question)}</div>
         ${q.image ? `<img class="qimg small-img" src="${esc(q.image)}" alt="문제 그림" loading="lazy">` : ""}
         ${isMC(q) ? `<div class="muted">${q.choices.map((c, k) => `${NUMS[k] || k + 1} ${esc(c)}`).join("<br>")}</div>` : ""}
         ${gt ? `<div class="answer-line muted">내 답: ${esc(gt)}</div>` : ""}
         <details class="note-ans"><summary>정답과 해설 보기 <span class="muted small">(먼저 떠올려 보세요)</span></summary>
           <div class="answer-line">정답: <b>${esc(answerText(q))}</b></div>
-          ${q.explanation ? `<div class="muted" style="margin-top:4px;white-space:pre-wrap">💡 ${esc(q.explanation)}</div>` : ""}
+          ${q.explanation ? `<div class="muted" style="margin-top:4px;white-space:pre-wrap">💡 ${abbrHTML(q.explanation)}</div>` : ""}
         </details>
         ${editable ? `
           <div class="field" style="margin:10px 0 6px">

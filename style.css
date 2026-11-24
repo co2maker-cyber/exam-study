@@ -348,3 +348,16 @@ details[open] > summary::before { transform: rotate(90deg); }
 .why-item { margin-top: 4px; }
 .why-item div { font-size: 14px; }
 .why-item .num { color: var(--muted); font-weight: 700; }
+
+/* ── 영어 약어 풀이 ── */
+abbr.ab { text-decoration: underline dotted var(--primary); text-underline-offset: 3px; cursor: help; }
+.ab-box { margin: 10px 0 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg); font-size: 14px; }
+.ab-title { font-weight: 700; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.ab-row { padding: 4px 0; border-top: 1px solid var(--line); }
+.ab-row:first-of-type { border-top: none; }
+.ab-row b { color: var(--primary); }
+.ab-full { font-weight: 600; }
+.ab-mean { color: var(--muted); font-size: 13px; }
+.feedback .ab-box { background: var(--card); }
+.ab-tip { position: absolute; z-index: 50; max-width: min(340px, calc(100vw - 16px)); padding: 8px 12px; border-radius: 10px; background: var(--text); color: var(--card); font-size: 14px; line-height: 1.5; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
+.ab-tip div { opacity: .85; font-size: 13px; }
